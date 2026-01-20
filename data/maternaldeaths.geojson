@@ -1,0 +1,1253 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5245011,
+          11.1858302
+        ]
+      },
+      "properties": {
+        "lga": "Tudun Wada",
+        "ward": "JITA",
+        "deaths": 1,
+        "age": 21
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4305813,
+          11.2892593
+        ]
+      },
+      "properties": {
+        "lga": "Tudun Wada",
+        "ward": "KAREFA",
+        "deaths": 1,
+        "age": 30
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.0614285,
+          11.3651731
+        ]
+      },
+      "properties": {
+        "lga": "Sumaila",
+        "ward": "KANAWA",
+        "deaths": 1,
+        "age": 18
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.0627441,
+          11.365876
+        ]
+      },
+      "properties": {
+        "lga": "Sumaila",
+        "ward": "KANAWA",
+        "deaths": 1,
+        "age": 22
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.837045,
+          11.3669988
+        ]
+      },
+      "properties": {
+        "lga": "Sumaila",
+        "ward": "GANI",
+        "deaths": 1,
+        "age": 38
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.8403679,
+          11.3710584
+        ]
+      },
+      "properties": {
+        "lga": "Sumaila",
+        "ward": "MASSU",
+        "deaths": 1,
+        "age": 34
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5481907,
+          11.4214724
+        ]
+      },
+      "properties": {
+        "lga": "Rano",
+        "ward": "SAJI",
+        "deaths": 1,
+        "age": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9107641,
+          11.4267688
+        ]
+      },
+      "properties": {
+        "lga": "Sumaila",
+        "ward": "MASSU",
+        "deaths": 1,
+        "age": 32
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          7.8126239,
+          11.4495689
+        ]
+      },
+      "properties": {
+        "lga": "Rogo",
+        "ward": "BELI",
+        "deaths": 1,
+        "age": 49
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.1967435,
+          11.4625291
+        ]
+      },
+      "properties": {
+        "lga": "Kiru",
+        "ward": "YALWA",
+        "deaths": 1,
+        "age": 29
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.7167284,
+          11.5218404
+        ]
+      },
+      "properties": {
+        "lga": "Kibiya",
+        "ward": "FAMMAR",
+        "deaths": 1,
+        "age": 26
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9560452,
+          11.5275711
+        ]
+      },
+      "properties": {
+        "lga": "Sumaila",
+        "ward": "SUMAILA",
+        "deaths": 1,
+        "age": 30
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.176839,
+          11.5328357
+        ]
+      },
+      "properties": {
+        "lga": "Takai",
+        "ward": "DURBUNDE",
+        "deaths": 1,
+        "age": 17
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5768716,
+          11.5510036
+        ]
+      },
+      "properties": {
+        "lga": "Rano",
+        "ward": "DAWAKI",
+        "deaths": 1,
+        "age": 40
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9655327,
+          11.5567622
+        ]
+      },
+      "properties": {
+        "lga": "Garko",
+        "ward": "KATUMARI",
+        "deaths": 1,
+        "age": 38
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9635056,
+          11.5572805
+        ]
+      },
+      "properties": {
+        "lga": "Garko",
+        "ward": "KATUMARI",
+        "deaths": 1,
+        "age": 34
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9634284,
+          11.5585851
+        ]
+      },
+      "properties": {
+        "lga": "Garko",
+        "ward": "KATUMARI",
+        "deaths": 1,
+        "age": 27
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.18197,
+          11.58899
+        ]
+      },
+      "properties": {
+        "lga": "Kiru",
+        "ward": "BAUDA",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.2209884,
+          11.6133217
+        ]
+      },
+      "properties": {
+        "lga": "Albasu",
+        "ward": "TSANGAYA",
+        "deaths": 1,
+        "age": 35
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6504695,
+          11.6439001
+        ]
+      },
+      "properties": {
+        "lga": "Bunkure",
+        "ward": "BUNKURE",
+        "deaths": 1,
+        "age": 31
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4470066,
+          11.6479133
+        ]
+      },
+      "properties": {
+        "lga": "Garum Mallam",
+        "ward": "KADAWA",
+        "deaths": 1,
+        "age": 28
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.8018552,
+          11.6504503
+        ]
+      },
+      "properties": {
+        "lga": "Garko",
+        "ward": "GARKO",
+        "deaths": 1,
+        "age": 23
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.0150581,
+          11.65208
+        ]
+      },
+      "properties": {
+        "lga": "Albasu",
+        "ward": "BATAIYA",
+        "deaths": 1,
+        "age": 39
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.7427936,
+          11.6666514
+        ]
+      },
+      "properties": {
+        "lga": "Bunkure",
+        "ward": "SANDA",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6687683,
+          11.67618
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "DABAR KWARI",
+        "deaths": 1,
+        "age": 24
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.1402759,
+          11.7021219
+        ]
+      },
+      "properties": {
+        "lga": "Kiru",
+        "ward": "BA'AWA",
+        "deaths": 1,
+        "age": 33
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6997657,
+          11.7282557
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "DABAR KWARI",
+        "deaths": 1,
+        "age": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.3930255,
+          11.7297792
+        ]
+      },
+      "properties": {
+        "lga": "Garum Mallam",
+        "ward": "JOBAWA",
+        "deaths": 1,
+        "age": 18
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.1238434,
+          11.73697
+        ]
+      },
+      "properties": {
+        "lga": "Gaya",
+        "ward": "MAIMAKAWA",
+        "deaths": 1,
+        "age": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9468632,
+          11.7408002
+        ]
+      },
+      "properties": {
+        "lga": "Gaya",
+        "ward": "KADEMI",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.1908495,
+          11.7582512
+        ]
+      },
+      "properties": {
+        "lga": "Kiru",
+        "ward": "ZUWO",
+        "deaths": 1,
+        "age": 30
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.8264037,
+          11.7589236
+        ]
+      },
+      "properties": {
+        "lga": "Wudil",
+        "ward": "DAGUMAWA",
+        "deaths": 1,
+        "age": 40
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.9375333,
+          11.774285
+        ]
+      },
+      "properties": {
+        "lga": "Gaya",
+        "ward": "KADEMI",
+        "deaths": 1,
+        "age": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.7770145,
+          11.7774428
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "DANBAGINA",
+        "deaths": 1,
+        "age": 30
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.605699,
+          11.7899409
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "TSAKUWA",
+        "deaths": 1,
+        "age": 40
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5773695,
+          11.7957643
+        ]
+      },
+      "properties": {
+        "lga": "Kura",
+        "ward": "DAN HASSAN",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.0023174,
+          11.7961688
+        ]
+      },
+      "properties": {
+        "lga": "Karaye",
+        "ward": "KURUGU",
+        "deaths": 1,
+        "age": 32
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.1303096,
+          11.808644
+        ]
+      },
+      "properties": {
+        "lga": "Gaya",
+        "ward": "MAIMAKAWA",
+        "deaths": 1,
+        "age": 17
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.58358585,
+          11.82126875
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "YANBARAU",
+        "deaths": 1,
+        "age": 31
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6780625,
+          11.8474643
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "DAWAKIJI",
+        "deaths": 1,
+        "age": 35
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.3700862,
+          11.8487504
+        ]
+      },
+      "properties": {
+        "lga": "Madobi",
+        "ward": "GORA",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6074612,
+          11.8625681
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "DAWAKI",
+        "deaths": 1,
+        "age": 50
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6076804,
+          11.8627239
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "DAWAKI",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.2979225,
+          11.8666752
+        ]
+      },
+      "properties": {
+        "lga": "Rimin Gado",
+        "ward": "DAWAKIN GULU",
+        "deaths": 1,
+        "age": 24
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5329259,
+          11.8711702
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "TAMBURAWA",
+        "deaths": 1,
+        "age": 39
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6792109,
+          11.8776621
+        ]
+      },
+      "properties": {
+        "lga": "Dawakin Kudu",
+        "ward": "ZOGARAWA",
+        "deaths": 1,
+        "age": 42
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.7951862,
+          11.888613
+        ]
+      },
+      "properties": {
+        "lga": "Warawa",
+        "ward": "DANLASAN",
+        "deaths": 1,
+        "age": 22
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.211097,
+          11.89044
+        ]
+      },
+      "properties": {
+        "lga": "Kabo",
+        "ward": "DURUN",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.3994631,
+          11.9137606
+        ]
+      },
+      "properties": {
+        "lga": "Rimin Gado",
+        "ward": "SAKARATSA",
+        "deaths": 1,
+        "age": 18
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          7.9454559,
+          11.9161878
+        ]
+      },
+      "properties": {
+        "lga": "Gwarzo",
+        "ward": "KUTAMA",
+        "deaths": 1,
+        "age": 26
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4646976,
+          11.9190327
+        ]
+      },
+      "properties": {
+        "lga": "Kumbotso",
+        "ward": "PANSHEKARA",
+        "deaths": 1,
+        "age": 33
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4927469,
+          11.9278596
+        ]
+      },
+      "properties": {
+        "lga": "Kumbotso",
+        "ward": "GURIN GAWA",
+        "deaths": 1,
+        "age": 22
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.6086662,
+          11.929125
+        ]
+      },
+      "properties": {
+        "lga": "Kumbotso",
+        "ward": "MARIRI",
+        "deaths": 1,
+        "age": 35
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.0313367,
+          11.9367983
+        ]
+      },
+      "properties": {
+        "lga": "Ajingi",
+        "ward": "DUNDUN",
+        "deaths": 1,
+        "age": 41
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5296915,
+          11.9539953
+        ]
+      },
+      "properties": {
+        "lga": "Kumbotso",
+        "ward": "DANMALIKI",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4129976,
+          11.9578614
+        ]
+      },
+      "properties": {
+        "lga": "Ungoggo",
+        "ward": "RIJIYAR ZAKI",
+        "deaths": 1,
+        "age": 24
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4125972,
+          11.9581704
+        ]
+      },
+      "properties": {
+        "lga": "Ungoggo",
+        "ward": "RIJIYAR ZAKI",
+        "deaths": 1,
+        "age": 19
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5003648,
+          11.9634278
+        ]
+      },
+      "properties": {
+        "lga": "Gwale",
+        "ward": "DORAYI",
+        "deaths": 1,
+        "age": 28
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4997229,
+          11.9650121
+        ]
+      },
+      "properties": {
+        "lga": "Gwale",
+        "ward": "DORAYI",
+        "deaths": 1,
+        "age": 21
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5772177,
+          11.9699424
+        ]
+      },
+      "properties": {
+        "lga": "Nasarawa",
+        "ward": "HOTORO SOUTH",
+        "deaths": 1,
+        "age": 29
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4408183,
+          11.9711367
+        ]
+      },
+      "properties": {
+        "lga": "Ungoggo",
+        "ward": "RIJIYAR ZAKI",
+        "deaths": 1,
+        "age": 40
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.1693099,
+          11.971944
+        ]
+      },
+      "properties": {
+        "lga": "Rimin Gado",
+        "ward": "DOKA DAWA",
+        "deaths": 1,
+        "age": 25
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.590045,
+          11.9737717
+        ]
+      },
+      "properties": {
+        "lga": "Nasarawa",
+        "ward": "HOTORO NORTH",
+        "deaths": 1,
+        "age": 21
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.2268808,
+          11.9771181
+        ]
+      },
+      "properties": {
+        "lga": "Rimin Gado",
+        "ward": "BUTU-BUTU",
+        "deaths": 1,
+        "age": 22
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.3217738,
+          11.9854409
+        ]
+      },
+      "properties": {
+        "lga": "Tofa",
+        "ward": "WANGARA",
+        "deaths": 1,
+        "age": 27
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.2990359,
+          11.993093
+        ]
+      },
+      "properties": {
+        "lga": "Tofa",
+        "ward": "DOKA",
+        "deaths": 1,
+        "age": 31
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4935518,
+          12.0039835
+        ]
+      },
+      "properties": {
+        "lga": "Gwale",
+        "ward": "GORON DUTSE",
+        "deaths": 1,
+        "age": 36
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.8024148,
+          12.0099993
+        ]
+      },
+      "properties": {
+        "lga": "Gezawa",
+        "ward": "TUMBAU",
+        "deaths": 1,
+        "age": 28
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4922785,
+          12.012062
+        ]
+      },
+      "properties": {
+        "lga": "Gwale",
+        "ward": "KABUGA",
+        "deaths": 1,
+        "age": 30
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4871417,
+          12.0244417
+        ]
+      },
+      "properties": {
+        "lga": "Dala",
+        "ward": "KOFAR RUWA",
+        "deaths": 1,
+        "age": 43
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4777533,
+          12.0277657
+        ]
+      },
+      "properties": {
+        "lga": "Dala",
+        "ward": "GOBIRAWA",
+        "deaths": 1,
+        "age": 41
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4835615,
+          12.0301631
+        ]
+      },
+      "properties": {
+        "lga": "Dala",
+        "ward": "GOBIRAWA",
+        "deaths": 1,
+        "age": 21
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4663694,
+          12.0358093
+        ]
+      },
+      "properties": {
+        "lga": "Ungoggo",
+        "ward": "TUDUN FULANI",
+        "deaths": 1,
+        "age": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.5487934,
+          12.0452531
+        ]
+      },
+      "properties": {
+        "lga": "Nasarawa",
+        "ward": "KAURA GOJE",
+        "deaths": 1,
+        "age": 19
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.4668874,
+          12.050779
+        ]
+      },
+      "properties": {
+        "lga": "Ungoggo",
+        "ward": "BACHIRAWA",
+        "deaths": 1,
+        "age": 21
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.8485892,
+          12.0555059
+        ]
+      },
+      "properties": {
+        "lga": "Gabasawa",
+        "ward": "ZUGACHI",
+        "deaths": 1,
+        "age": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.247714,
+          12.0558259
+        ]
+      },
+      "properties": {
+        "lga": "Tofa",
+        "ward": "TOFA",
+        "deaths": 1,
+        "age": 29
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.3389907,
+          12.058187
+        ]
+      },
+      "properties": {
+        "lga": "Tofa",
+        "ward": "YALWA KARAMA",
+        "deaths": 1,
+        "age": 30
+      }
+    }
+  ]
+}

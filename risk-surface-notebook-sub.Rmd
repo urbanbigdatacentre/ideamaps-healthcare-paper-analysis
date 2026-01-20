@@ -1,0 +1,154 @@
+---
+title: "Estimating Risk Surface"
+output: html_notebook
+---
+
+# Preliminary tasks 
+
+## Preparation
+The code processes the healthcare model outputs to estimate a 
+risk surface based on https://arxiv.org/pdf/1707.06888
+Read CSV file
+
+### Required packages
+To secure the necessary packages, run the following code:
+```{r include=FALSE}
+install.packages('sparr')
+```
+### Load required packages
+```{r include=FALSE}
+library(sf)
+library(sparr)
+library(jsonlite)
+library(sp)
+library(dplyr)
+library(ggplot2)
+```
+
+## View first few rows
+head(data)
+```{r read-model-ouputs, include=FALSE}
+# Read CSV file
+data <- read.csv("data/model-output-acc-score.csv")
+head(data)
+```
+
+## View first few rows
+```{r read-maternal-deaths, include=FALSE}
+maternal_deaths <- sf::st_read("data/maternaldeaths.geojson", quiet = TRUE)
+head(maternal_deaths)
+```
+
+## View first few rows
+```{r read-study-area, include=FALSE}
+# Read CSV file
+kano <- sf::st_read("data/grid-boundary-kano.gpkg", quiet = TRUE)
+head(kano)
+```
+
+# Default estimation using example
+
+Estimate risk surface using the PBC dataset - Available via the sparr package
+
+This section needs to be reviewed. With the  
+```{r estimate-initial-pbc, include=FALSE}
+data(pbc)
+pbccas <- split(pbc)$case
+pbccon <- split(pbc)$control
+```
+
+```{r estimate-initial-pbc, include=FALSE}
+risk(f=pbccas,g=pbccon,doplot=TRUE)
+```
+
+```{r estimate-pbc-geoemtric, include=FALSE}
+h0 <- OS(pbc, nstar="geometric")
+pbc_rr <- risk(f=pbccas, g=pbccon, h0=h0, adapt=TRUE, tolerate=TRUE, hp=OS(pbc)/2, pilot.symmetry="pooled", davies.baddeley=0.05)
+plot(pbc_rr)
+```
+
+
+## Estimate risk surface using the maternal deaths dataset
+
+
+We need to create the two datasets, control dataset will come from the population
+dataset. It will use a function created to generate random points within the study area.
+
+### Population at risk
+The paper refers to population at risk data. Here we will use WorldPop data for women
+of childbearing age in Kano, Nigeria.
+Note that the study area is constrained to the area defined by the IDEAMAPS
+data ecosystem project. 
+```{r generate-random-population-points, include=FALSE}
+source("createrandompoints.R")
+raster_to_random_points("data/Kano_Women_15-49_WorldPOP.tif", "outputs/random-points-women-kano.gpkg")
+# Read the geospatial data from random points file
+womenrepage <- sf::st_read("outputs/random-points-women-kano.geopkg", quiet = TRUE)
+
+
+```
+
+Build the spatial window for the PPP objects
+```{r read-random-population-points, include=FALSE}
+maternal_deaths <- sf::st_read("outputs/random-points-women-kano.gpkg", quiet = TRUE)
+# Create spatial window (observation region)
+# Get the boundary from the kano sf object
+# kano_boundary <- st_union(kano)  # Combine all geometries into one
+# kano_boundary_sp <- as(kano_boundary, "Spatial")  # Convert to Spatial object
+# kano_boundary_owin <- as.owin(kano_boundary_sp)  # Convert to owin object
+
+# Create spatial window (observation region)
+# Get bounding box and create an owin object
+bbox <- st_bbox(maternal_deaths)
+window <- owin(xrange = c(bbox["xmin"], bbox["xmax"]), 
+               yrange = c(bbox["ymin"], bbox["ymax"]))
+
+```
+
+Once the data is generated from the raster dataset the variable is set
+```{r read-random-population-points, include=FALSE}
+
+# from geojson to ppp
+deaths <- st_as_sf(maternal_deaths)
+# Extract coordinates from sf object
+coords <- st_coordinates(deaths)
+
+# Create ppp object
+deaths_ppp <- ppp(x = coords[,1], y = coords[,2], window = window)
+
+# View summary
+summary(deaths_ppp)
+
+```
+
+
+### Cases
+The Cases
+```{r read-mortality-cases, include=FALSE}
+
+
+population <- st_as_sf(womenrepage)
+# Extract coordinates from sf object
+coords <- st_coordinates(population)
+
+# Create ppp object
+pop_ppp <- ppp(x = coords[,1], y = coords[,2], window = window)
+
+# View summary
+summary(pop_ppp)
+```
+
+
+### Estimating risk surface using the PBC dataset - Available via the sparr package
+```{r estimate-initial-pbc, include=FALSE}
+hfix <- LSVC.risk(f = deaths_ppp, g = pop_ppp)
+#risk(f = deaths_ppp, g = pop_ppp, window = window, doplot = TRUE)
+```
+
+```{r estimate-pbc-geoemtric, include=FALSE}
+h0 <- OS(pbc, nstar="geometric")
+pbc_rr <- risk(f=pbccas, g=pbccon, h0=h0, adapt=TRUE, tolerate=TRUE, hp=OS(pbc)/2, pilot.symmetry="pooled", davies.baddeley=0.05)
+plot(pbc_rr)
+```
+
+
