@@ -20,6 +20,7 @@ Key optimizations applied:
 ```{r install-packages, include=FALSE, eval=FALSE}
 # Only run once - set eval=FALSE after first run
 install.packages(c('sparr', 'terra', 'sf', 'spatstat', 'dplyr', 'ggplot2'))
+install.packages("rlang")
 ```
 
 ### Load required packages
@@ -31,11 +32,6 @@ library(spatstat)
 library(dplyr)
 library(ggplot2)
 ```
-
-```{r}
-install.packages("rlang")
-```
-
 ---
 
 # Load Data
@@ -147,7 +143,7 @@ colnames(r_df) <- c("x", "y", "pop")
 # Original values (mean ~481, max ~8741) would generate ~1.8M points and crash R.
 # Dividing by 100 reduces this to ~18,000 points while keeping relative densities identical.
 # A cell with 500 women gets 5 points; a cell with 8741 women gets 87 points.
-SCALE_FACTOR <- 100 #could try different scale to get optimal 
+SCALE_FACTOR <- 100 #could try different scale to get optimal result, 50, 20, 10....
 r_df$n_points <- pmax(1, round(r_df$pop / SCALE_FACTOR))
 # pmax(1, ...) ensures every cell contributes at least 1 point so no population is lost
 
@@ -239,6 +235,7 @@ rr_geom <- risk(
   doplot   = TRUE
 )
 plot(rr_geom, main = "Risk Surface - Geometric Bandwidth")
+
 ```
 
 ### Option C: Adaptive bandwidth (most accurate, slowest)
@@ -261,18 +258,159 @@ plot(rr_adapt, main = "Risk Surface - Adaptive Bandwidth")
 ```
 
 
-## Step 7: Export results
+
+## Steo 7 Change risk surface from 1km to 100m resolution
+```{r}
+# Convert risk surface to terra raster and set CRS
+rr_raster <- terra::rast(rr_adapt$rr)
+terra::crs(rr_raster) <- "EPSG:32632"
+
+# Reproject to WGS84
+rr_wgs84 <- terra::project(rr_raster, "EPSG:4326")
+
+# Extract resolution directly from model output grid
+res_x <- mean(data$lon_max - data$lon_min)
+res_y <- mean(data$lat_max - data$lat_min)
+cat("Model output resolution - x:", res_x, "y:", res_y, "\n")
+
+# Create template from model output extent and resolution
+template <- terra::rast(
+  xmin       = min(data$lon_min),
+  xmax       = max(data$lon_max),
+  ymin       = min(data$lat_min),
+  ymax       = max(data$lat_max),
+  resolution = c(res_x, res_y),
+  crs        = "EPSG:4326"
+)
+
+# Resample risk surface to match model output exactly
+rr_resampled <- terra::resample(rr_wgs84, template, method = "bilinear")
+
+cat("Original resolution:", terra::res(rr_wgs84), "\n")
+cat("Resampled resolution:", terra::res(rr_resampled), "\n")
+```
+
+## Step 8: Export results
 
 ```{r export}
+terra::writeRaster(rr_resampled,
+                   "outputs/risk-surface-kano.tif",
+                   overwrite = TRUE)
+cat("GeoTIFF saved\n")
+```
+
+```{r}
 png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
-plot(rr_adapt, main = "Maternal Death Risk Surface - Kano, Nigeria")
+plot(rr_resampled, main = "Maternal Death Risk Surface - Kano, Nigeria")
 dev.off()
 ```
 
 
+## make same resolution, 1km and 100m
+check numeric of accessibility score
+check the categories of high medium and low (thresholds)
+maybe also try general healthcare model
+
+Further analysis :
+1. Bi-variate cluster analysis 
+2. Test only with the built up area
+
+### calculate avg risk of high, medium and low
+### compare the number, regression
+### statistic analysis, max, min... volin plot
+### Bi-variate cluster analysis, check different between clusters
+### analysis build up area
 
 
+## Step 9: Normalize risk surface to 0-1
 
+```{r}
+rr_min  <- terra::global(rr_resampled, "min", na.rm = TRUE)$min
+rr_max  <- terra::global(rr_resampled, "max", na.rm = TRUE)$max
+rr_norm <- (rr_resampled - rr_min) / (rr_max - rr_min)
+
+cat("Normalized min:", terra::global(rr_norm, "min", na.rm = TRUE)$min, "\n")
+cat("Normalized max:", terra::global(rr_norm, "max", na.rm = TRUE)$max, "\n")
+
+terra::writeRaster(rr_norm,
+                   "outputs/risk-surface-kano-normalized.tif",
+                   overwrite = TRUE)
+```
+
+## Step 10: Density plot comparison
+```{r}
+# Density plots
+# --- Normalized risk distribution ---
+rr_norm_vec <- as.vector(terra::values(rr_norm, na.rm = TRUE))
+
+p1 <- ggplot(data.frame(risk = rr_norm_vec), aes(x = risk)) +
+  geom_density(fill = "orange", alpha = 0.5) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "red") +
+  annotate("text", x = 0.52, y = 0,
+           label = "Above average →", hjust = 0, color = "red", size = 3) +
+  labs(
+    title    = "Distribution of Normalized Risk Surface",
+    subtitle = "Values > 0.5 indicate above-average risk",
+    x        = "Normalized Risk (0-1)",
+    y        = "Density"
+  ) +
+  theme_minimal()
+
+print(p1)
+```
+```{r}
+# Density plots
+# --- Normalized model output ---
+acc_vec <- as.vector(data$Accessibility_standard)
+
+p2 <- ggplot(data.frame(risk = acc_vec), aes(x = risk)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "red") +
+  annotate("text", x = 0.52, y = 0,
+           label = "Above average →", hjust = 0, color = "red", size = 3) +
+  labs(
+    title    = "Distribution of Normalized Risk Surface",
+    subtitle = "Values > 0.5 indicate above-average risk",
+    x        = "Normalized Risk (0-1)",
+    y        = "Density"
+  ) +
+  theme_minimal()
+
+print(p2)
+```
+
+
+```{r}
+# Extract normalized risk surface values
+rr_vec  <- as.vector(terra::values(rr_norm, na.rm = TRUE))
+
+# Use model output Accessibility_standard directly (already normalized)
+acc_vec <- as.vector(data$Accessibility_standard)
+
+# Combined density plot
+df_combined <- data.frame(
+  value  = c(rr_vec, acc_vec),
+  source = c(rep("Risk Surface",        length(rr_vec)),
+             rep("Accessibility Score", length(acc_vec)))
+)
+
+p_compare <- ggplot(df_combined, aes(x = value, fill = source)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = c("Risk Surface"        = "orange",
+                               "Accessibility Score" = "steelblue")) +
+  labs(
+    title    = "Risk Surface vs Accessibility Score - Kano, Nigeria",
+    subtitle = "Both normalized to 0-1 for comparison",
+    x        = "Normalized Value (0-1)",
+    y        = "Density",
+    fill     = ""
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+print(p_compare)
+```
 
 
 
