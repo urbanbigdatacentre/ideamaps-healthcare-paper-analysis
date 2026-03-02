@@ -54,36 +54,6 @@ kano <- sf::st_read("data/grid-boundary-kano.gpkg", quiet = TRUE)
 head(kano)
 ```
 
----
-
-# Validation: Test with built-in PBC dataset
-
-Before running on real data, validate the method using `sparr`'s built-in PBC dataset.
-
-```{r pbc-setup}
-data(pbc)
-pbccas <- split(pbc)$case
-pbccon <- split(pbc)$control
-```
-
-```{r pbc-basic-risk, include=FALSE}
-# Basic risk surface with default bandwidth
-risk(f = pbccas, g = pbccon, doplot = TRUE)
-```
-
-```{r pbc-adaptive-risk, include=FALSE}
-h0 <- OS(pbc, nstar = "geometric")
-pbc_rr <- risk(
-  f = pbccas, g = pbccon,
-  h0 = h0, adapt = TRUE, tolerate = TRUE,
-  hp = OS(pbc) / 2,
-  pilot.symmetry = "pooled",
-  davies.baddeley = 0.05
-)
-plot(pbc_rr)
-```
-
-
 
 ---
 
@@ -96,7 +66,7 @@ plot(pbc_rr)
 # UTM Zone 32N (EPSG:32632) is appropriate for Kano, Nigeria.
 # All datasets must use the same CRS for ppp objects to align correctly.
 
-```{r reproject-data}
+```{r reproject-data, include=TRUE}
 CRS_UTM <- 32632
 
 kano_proj           <- sf::st_transform(kano, crs = CRS_UTM)
@@ -111,7 +81,7 @@ cat("All data reprojected to UTM Zone 32N\n")
 # Deaths outside the study area boundary have no corresponding 
 # population Controls and would bias the risk surface.
 
-```{r filter-deaths}
+```{r filter-deaths, include=TRUE}
 maternal_deaths_kano <- sf::st_filter(maternal_deaths_proj, kano_proj)
 cat("Deaths within Kano study area:", nrow(maternal_deaths_kano),
     "out of", nrow(maternal_deaths_proj), "\n")
