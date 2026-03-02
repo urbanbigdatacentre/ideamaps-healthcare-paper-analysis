@@ -15,12 +15,12 @@ Key optimizations applied:
 - Fixed bandwidth used first for speed; adaptive bandwidth optional
 - Duplicate chunk names fixed
 - Cases/Controls variable naming corrected
+- All data reprojected to Mollweide (ESRI:54009) for equal-area analysis
 
 ### Install required packages
 ```{r install-packages, include=FALSE, eval=FALSE}
 # Only run once - set eval=FALSE after first run
-install.packages(c('sparr', 'terra', 'sf', 'spatstat', 'dplyr', 'ggplot2'))
-install.packages("rlang")
+install.packages(c('sparr', 'terra', 'sf', 'spatstat', 'dplyr', 'ggplot2', "tidyterra", "ggspatial", "viridis", "cowplot", "rlang"))
 ```
 
 ### Load required packages
@@ -31,6 +31,10 @@ library(terra)       # Modern replacement for raster package
 library(spatstat)
 library(dplyr)
 library(ggplot2)
+library(tidyterra)
+library(ggspatial)
+library(cowplot)
+library(viridis)
 ```
 ---
 
@@ -54,94 +58,87 @@ kano <- sf::st_read("data/grid-boundary-kano.gpkg", quiet = TRUE)
 head(kano)
 ```
 
+## Population data (Women of childbearing age 15-49, 100m resolution)
+```{r read-population, include=FALSE}
+population <- sf::st_read("data/pop-grid-kano-centroids.gpkg", quiet = TRUE)
+head(population)
+```
 
 ---
 
 # Main Analysis: Maternal Death Risk Surface in Kano
 
-## Step 1: Reproject all data to UTM Zone 32N
-# 
-# spatstat's as.owin() requires a projected coordinate system (metres),
-# not geographic coordinates (degrees). WGS84 will cause as.owin() to fail.
-# UTM Zone 32N (EPSG:32632) is appropriate for Kano, Nigeria.
+## Step 1: Reproject all data to Mollweide
+#
+# Mollweide (ESRI:54009) is an equal-area projection suitable for spatial analysis.
+# spatstat's as.owin() requires a projected coordinate system (metres), not WGS84 degrees.
 # All datasets must use the same CRS for ppp objects to align correctly.
 
-```{r reproject-data, include=TRUE}
-CRS_UTM <- 32632
+```{r reproject-data}
+CRS_MOLLWEIDE <- "ESRI:54009"
 
-kano_proj           <- sf::st_transform(kano, crs = CRS_UTM)
-maternal_deaths_proj <- sf::st_transform(maternal_deaths, crs = CRS_UTM)
+kano_proj            <- sf::st_transform(kano,            crs = CRS_MOLLWEIDE)
+maternal_deaths_proj <- sf::st_transform(maternal_deaths, crs = CRS_MOLLWEIDE)
+population_proj      <- sf::st_transform(population,      crs = CRS_MOLLWEIDE)
 
-cat("All data reprojected to UTM Zone 32N\n")
+cat("All data reprojected to Mollweide\n")
 ```
 
 ## Step 2: Filter maternal deaths to Kano study area
 #
 # maternal_deaths contains records from the wider Kano region.
-# Deaths outside the study area boundary have no corresponding 
-# population Controls and would bias the risk surface.
+# Deaths outside the study area boundary have no corresponding
+# population Controls and would bias the risk surface upward.
 
-```{r filter-deaths, include=TRUE}
+```{r filter-deaths}
 maternal_deaths_kano <- sf::st_filter(maternal_deaths_proj, kano_proj)
 cat("Deaths within Kano study area:", nrow(maternal_deaths_kano),
     "out of", nrow(maternal_deaths_proj), "\n")
 
 # Visual check
 plot(sf::st_geometry(kano_proj), main = "Maternal Deaths within Kano Study Area")
-plot(sf::st_geometry(maternal_deaths_kano), add = TRUE, 
+plot(sf::st_geometry(maternal_deaths_kano), add = TRUE,
      col = "red", pch = 16, cex = 1.2)
 ```
 
-## Step 3: Generate population points from WorldPop raster
+## Step 3: Generate population points from 100m grid centroids
 #
-# The original raster_to_random_points() generates points equal to the 
-# population value per cell (mean ~481, max ~8741), producing ~1.8M points
-# and crashing R.
-#
-# Fix: scale down all values by SCALE_FACTOR before generating points.
-# A cell with 500 women gets 5 points, a cell with 8741 gets 87 points.
-# Relative proportions are preserved so the kernel density estimate is
-# mathematically equivalent to the original approach.
+# Each centroid represents population within a 100m cell.
+# We generate random points proportional to population value in each cell.
+# SCALE_FACTOR reduces total point count while preserving relative spatial distribution.
 # pmax(1, ...) ensures every cell contributes at least 1 point.
-```{r generate-population-points, include=FALSE}
+```{r generate-population-points}
+# Remove NA and zero values - cells with no population don't need points
+pop_df <- pop_df[!is.na(pop_df$pop) & pop_df$pop > 0, ]
+cat("Cells with population > 0:", nrow(pop_df), "\n")
+summary(pop_df$pop)
 
-r <- terra::rast("data/Kano_Women_15-49_WorldPOP.tif")
-r_df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
-colnames(r_df) <- c("x", "y", "pop")
+SCALE_FACTOR    <- 100
+# No pmax(1,...) needed - cells with pop=0 already filtered out
+pop_df$n_points <- round(pop_df$pop / SCALE_FACTOR)
 
-# Scale down population values proportionally.
-# Original values (mean ~481, max ~8741) would generate ~1.8M points and crash R.
-# Dividing by 100 reduces this to ~18,000 points while keeping relative densities identical.
-# A cell with 500 women gets 5 points; a cell with 8741 women gets 87 points.
-SCALE_FACTOR <- 100 #could try different scale to get optimal result, 50, 20, 10....
-r_df$n_points <- pmax(1, round(r_df$pop / SCALE_FACTOR))
-# pmax(1, ...) ensures every cell contributes at least 1 point so no population is lost
+# Filter out any cells that round down to 0
+pop_df <- pop_df[pop_df$n_points > 0, ]
+cat("Total points to generate:", sum(pop_df$n_points), "\n")
 
-cat("Total points to generate:", sum(r_df$n_points), "\n")
+cell_size <- 100
 
-# Get raster resolution to define cell boundaries for random point placement
-res_x <- terra::res(r)[1]
-res_y <- terra::res(r)[2]
-
-set.seed(42) # For reproducibility
-# For each cell, generate n_points random coordinates within the cell boundary.
-# Points are scattered within the 1km x 1km cell rather than placed at the centre,
-# which gives a more realistic spatial distribution.
-points_list <- lapply(1:nrow(r_df), function(i) {
-  n <- r_df$n_points[i]
+set.seed(42)
+points_list <- lapply(1:nrow(pop_df), function(i) {
+  n <- pop_df$n_points[i]
   data.frame(
-    x = runif(n, r_df$x[i] - res_x/2, r_df$x[i] + res_x/2),
-    y = runif(n, r_df$y[i] - res_y/2, r_df$y[i] + res_y/2)
+    x = runif(n, pop_df$x[i] - cell_size/2, pop_df$x[i] + cell_size/2),
+    y = runif(n, pop_df$y[i] - cell_size/2, pop_df$y[i] + cell_size/2)
   )
 })
 
-# Combine all points into a single data frame and convert to sf object
 points_df   <- do.call(rbind, points_list)
-womenrepage <- sf::st_as_sf(points_df, coords = c("x", "y"),
-                             crs = st_crs(maternal_deaths))
+womenrepage <- sf::st_as_sf(points_df, coords = c("x", "y"), crs = CRS_MOLLWEIDE)
 
 cat("Population points generated:", nrow(womenrepage), "\n")
 ```
+
+
 
 ## Step 4: Build spatial window from Kano polygon boundary
 #
@@ -153,16 +150,14 @@ cat("Population points generated:", nrow(womenrepage), "\n")
 ```{r build-window}
 kano_poly   <- sf::st_cast(kano_proj, "POLYGON")
 kano_window <- spatstat.geom::as.owin(kano_poly)
-class(kano_window)
+cat("Window class:", class(kano_window), "\n")
 ```
-
-
 ## Step 5: Create PPP objects
 
 ```{r create-cases-ppp}
 # Cases: maternal deaths within Kano study area
 deaths_coords <- sf::st_coordinates(maternal_deaths_kano)
-deaths_ppp <- spatstat.geom::ppp(
+deaths_ppp    <- spatstat.geom::ppp(
   x      = deaths_coords[, 1],
   y      = deaths_coords[, 2],
   window = kano_window
@@ -173,9 +168,7 @@ summary(deaths_ppp)
 
 ```{r create-controls-ppp}
 # Controls: population at risk (women of childbearing age)
-womenrepage_proj <- sf::st_transform(womenrepage, crs = 32632)
-
-pop_coords <- sf::st_coordinates(womenrepage_proj)
+pop_coords <- sf::st_coordinates(womenrepage)
 pop_ppp    <- spatstat.geom::ppp(
   x      = pop_coords[, 1],
   y      = pop_coords[, 2],
@@ -228,14 +221,97 @@ plot(rr_adapt, main = "Risk Surface - Adaptive Bandwidth")
 ```
 
 
-
-## Steo 7 Change risk surface from 1km to 100m resolution
 ```{r}
-# Convert risk surface to terra raster and set CRS
-rr_raster <- terra::rast(rr_adapt$rr)
-terra::crs(rr_raster) <- "EPSG:32632"
+# Prepare data for ggplot
 
-# Reproject to WGS84
+# Convert rr_adapt risk surface to terra raster
+rr_raster <- terra::rast(rr_adapt$rr)
+terra::crs(rr_raster) <- "ESRI:54009"
+
+# Convert significance surface (p-values)
+rr_p <- terra::rast(rr_adapt$P)
+terra::crs(rr_p) <- "ESRI:54009"
+
+# Create significance mask (p < 0.05)
+sig_mask <- rr_p < 0.05
+
+# Convert kano boundary to sf for plotting
+kano_sf <- sf::st_as_sf(kano_proj)
+
+# ============================================================
+# Main risk surface plot
+
+p_risk <- ggplot() +
+  tidyterra::geom_spatraster(data = rr_raster) +
+  scale_fill_gradient2(
+    low      = "#2166AC",
+    mid      = "white",
+    high     = "#D6604D",
+    midpoint = 0,
+    na.value = "transparent",
+    name     = "Log Risk Ratio",
+    guide    = guide_colorbar(
+      barwidth       = 0.8,
+      barheight      = 8,
+      title.position = "top"
+    )
+  ) +
+  geom_sf(data = kano_sf,
+          fill      = NA,
+          color     = "black",
+          linewidth = 0.5) +
+  tidyterra::geom_spatraster_contour(
+    data      = rr_p,
+    breaks    = 0.05,
+    color     = "black",
+    linewidth = 0.6
+  ) +
+  geom_sf(data   = maternal_deaths_kano,
+          color  = "black",
+          fill   = "yellow",
+          shape  = 21,
+          size   = 1.5,
+          stroke = 0.4) +
+  ggspatial::annotation_scale(
+    location   = "bl",
+    width_hint = 0.2,
+    text_cex   = 0.7
+  ) +
+  ggspatial::annotation_north_arrow(
+    location    = "br",
+    which_north = "true",
+    pad_x       = unit(0.1, "in"),
+    pad_y       = unit(0.1, "in"),
+    style       = north_arrow_fancy_orienteering(text_size = 6)
+  ) +
+  labs(
+    title    = "Maternal Death Risk Surface — Kano, Nigeria",
+    subtitle = "Kernel density ratio (adaptive bandwidth)\nBlack contours indicate p < 0.05 significance"
+  ) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13, hjust = 0.5),
+    plot.subtitle   = element_text(size = 9, color = "grey40", hjust = 0.5),
+    plot.caption    = element_text(size = 7, color = "grey50", hjust = 0),
+    legend.position = "right",
+    legend.title    = element_text(size = 8, face = "bold"),
+    legend.text     = element_text(size = 7),
+    plot.margin     = margin(10, 20, 10, 20))
+
+print(p_risk)
+```
+
+## Step 7: Resample risk surface to match model output resolution
+#
+# rr_adapt is computed in Mollweide (metres).
+# Model output grid is in WGS84 degrees at ~100m resolution.
+# Steps: set CRS → reproject to WGS84 → resample to model output grid.
+
+```{r resample-risk-surface}
+# Convert rr_adapt to terra raster and set Mollweide CRS
+rr_raster <- terra::rast(rr_adapt$rr)
+terra::crs(rr_raster) <- CRS_MOLLWEIDE
+
+# Reproject to WGS84 for compatibility with model output
 rr_wgs84 <- terra::project(rr_raster, "EPSG:4326")
 
 # Extract resolution directly from model output grid
@@ -253,26 +329,27 @@ template <- terra::rast(
   crs        = "EPSG:4326"
 )
 
-# Resample risk surface to match model output exactly
+# Resample risk surface to match model output grid exactly
 rr_resampled <- terra::resample(rr_wgs84, template, method = "bilinear")
 
 cat("Original resolution:", terra::res(rr_wgs84), "\n")
 cat("Resampled resolution:", terra::res(rr_resampled), "\n")
 ```
 
-## Step 8: Export results
+## Step 8: Save as GeoTIFF and PNG
 
 ```{r export}
+# Save original sparr plot as PNG
+png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
+plot(rr_adapt, main = "Maternal Death Risk Surface - Kano, Nigeria")
+dev.off()
+cat("PNG saved to outputs/risk-surface-kano.png\n")
+
+# Save resampled raster as GeoTIFF
 terra::writeRaster(rr_resampled,
                    "outputs/risk-surface-kano.tif",
                    overwrite = TRUE)
-cat("GeoTIFF saved\n")
-```
-
-```{r}
-png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
-plot(rr_resampled, main = "Maternal Death Risk Surface - Kano, Nigeria")
-dev.off()
+cat("GeoTIFF saved to outputs/risk-surface-kano.tif\n")
 ```
 
 
@@ -294,68 +371,27 @@ Further analysis :
 
 ## Step 9: Normalize risk surface to 0-1
 
-```{r}
+```{r normalize}
 rr_min  <- terra::global(rr_resampled, "min", na.rm = TRUE)$min
 rr_max  <- terra::global(rr_resampled, "max", na.rm = TRUE)$max
 rr_norm <- (rr_resampled - rr_min) / (rr_max - rr_min)
 
 cat("Normalized min:", terra::global(rr_norm, "min", na.rm = TRUE)$min, "\n")
 cat("Normalized max:", terra::global(rr_norm, "max", na.rm = TRUE)$max, "\n")
-
-terra::writeRaster(rr_norm,
-                   "outputs/risk-surface-kano-normalized.tif",
-                   overwrite = TRUE)
 ```
 
-## Step 10: Density plot comparison
-```{r}
-# Density plots
-# --- Normalized risk distribution ---
-rr_norm_vec <- as.vector(terra::values(rr_norm, na.rm = TRUE))
+## Step 10: Density plot comparison - Risk Surface vs Accessibility Score
 
-p1 <- ggplot(data.frame(risk = rr_norm_vec), aes(x = risk)) +
-  geom_density(fill = "orange", alpha = 0.5) +
-  geom_vline(xintercept = 0.5, linetype = "dashed", color = "red") +
-  annotate("text", x = 0.52, y = 0,
-           label = "Above average →", hjust = 0, color = "red", size = 3) +
-  labs(
-    title    = "Distribution of Normalized Risk Surface",
-    subtitle = "Values > 0.5 indicate above-average risk",
-    x        = "Normalized Risk (0-1)",
-    y        = "Density"
-  ) +
-  theme_minimal()
-
-print(p1)
-```
-```{r}
-# Density plots
-# --- Normalized model output ---
-acc_vec <- as.vector(data$Accessibility_standard)
-
-p2 <- ggplot(data.frame(risk = acc_vec), aes(x = risk)) +
-  geom_density(fill = "blue", alpha = 0.5) +
-  geom_vline(xintercept = 0.5, linetype = "dashed", color = "red") +
-  annotate("text", x = 0.52, y = 0,
-           label = "Above average →", hjust = 0, color = "red", size = 3) +
-  labs(
-    title    = "Distribution of Normalized Risk Surface",
-    subtitle = "Values > 0.5 indicate above-average risk",
-    x        = "Normalized Risk (0-1)",
-    y        = "Density"
-  ) +
-  theme_minimal()
-
-print(p2)
-```
-
-
-```{r}
+```{r density-comparison}
 # Extract normalized risk surface values
-rr_vec  <- as.vector(terra::values(rr_norm, na.rm = TRUE))
+rr_vec <- as.vector(terra::values(rr_norm, na.rm = TRUE))
 
-# Use model output Accessibility_standard directly (already normalized)
-acc_vec <- as.vector(data$Accessibility_standard)
+# Log-transform Accessibility_standard to address extreme right skew
+# (MinMaxScaler preserves skew - log transform improves visualization)
+acc_log  <- log(data$Accessibility_standard + 1e-10)
+acc_min  <- min(acc_log, na.rm = TRUE)
+acc_max  <- max(acc_log, na.rm = TRUE)
+acc_vec  <- as.vector((acc_log - acc_min) / (acc_max - acc_min))
 
 # Combined density plot
 df_combined <- data.frame(
@@ -371,7 +407,7 @@ p_compare <- ggplot(df_combined, aes(x = value, fill = source)) +
                                "Accessibility Score" = "steelblue")) +
   labs(
     title    = "Risk Surface vs Accessibility Score - Kano, Nigeria",
-    subtitle = "Both normalized to 0-1 for comparison",
+    subtitle = "Both normalized to 0-1 (Accessibility Score log-transformed for visualization)",
     x        = "Normalized Value (0-1)",
     y        = "Density",
     fill     = ""
@@ -380,7 +416,7 @@ p_compare <- ggplot(df_combined, aes(x = value, fill = source)) +
   theme(legend.position = "top")
 
 print(p_compare)
+cat("Density plot saved\n")
 ```
-
 
 
