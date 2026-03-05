@@ -117,7 +117,7 @@ cat("Population summary:\n")
 summary(pop_valid$pop)
 
 # Scale down population values proportionally
-SCALE_FACTOR <- 50
+SCALE_FACTOR <- 10
 pop_valid[["n_points"]] <- round(pop_valid[["pop"]] / SCALE_FACTOR)
 
 # Filter out cells that round down to 0
@@ -292,43 +292,35 @@ p_risk <- ggplot() +
 
 print(p_risk)
 ```
+```{r}
 
-## Step 7: Save as GeoTIFF and PNG
-
-```{r export}
-# Save original sparr plot as PNG
-png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
-plot(rr_adapt, main = "Maternal Death Risk Surface - Kano, Nigeria")
-dev.off()
-
-# Save resampled raster as GeoTIFF
-ggsave("outputs/risk-surface-kano-journal.tiff",
-       plot  = p_risk,
-       width = 8,
-       height = 7,
-       dpi   = 300)
 ```
 
-## Step 8: Resample risk surface to match model output resolution
+
+## Step 7: Resample risk surface to match model output resolution
 #
-# rr_adapt is computed in Mollweide (metres).
-# Model output grid is in WGS84 degrees at ~100m resolution.
-# Steps: set CRS → reproject to WGS84 → resample to model output grid.
-
-```{r resample-risk-surface}
-# Convert rr_adapt to terra raster and set Mollweide CRS
+# rr_adapt is computed in Mollweide (ESRI:54009).
+# Convert to WGS84 for compatibility with other datasets and GIS software.
+# No resampling - bandwidth (~4747m) determines the natural resolution of
+# the risk surface regardless of input data resolution.
+```{r save-risk-surface}
+# Convert to terra raster and set Mollweide CRS
 rr_raster <- terra::rast(rr_adapt$rr)
-terra::crs(rr_raster) <- CRS_MOLLWEIDE
+terra::crs(rr_raster) <- "ESRI:54009"
 
-# Reproject to WGS84 for compatibility with model output
+# Also extract significance surface
+rr_p <- terra::rast(rr_adapt$P)
+terra::crs(rr_p) <- "ESRI:54009"
+
+# Reproject to WGS84
 rr_wgs84 <- terra::project(rr_raster, "EPSG:4326")
 
-# Extract resolution directly from model output grid
+# Resample risk surface to 100m and save GeoTIFF
+# Extract resolution from model output grid
 res_x <- mean(data$lon_max - data$lon_min)
 res_y <- mean(data$lat_max - data$lat_min)
-cat("Model output resolution - x:", res_x, "y:", res_y, "\n")
 
-# Create template from model output extent and resolution
+# Create template matching model output grid exactly
 template <- terra::rast(
   xmin       = min(data$lon_min),
   xmax       = max(data$lon_max),
@@ -338,11 +330,21 @@ template <- terra::rast(
   crs        = "EPSG:4326"
 )
 
-# Resample risk surface to match model output grid exactly
+# Resample to 100m
 rr_resampled <- terra::resample(rr_wgs84, template, method = "bilinear")
+```
 
-cat("Original resolution:", terra::res(rr_wgs84), "\n")
-cat("Resampled resolution:", terra::res(rr_resampled), "\n")
+## Step 8: Save as GeoTIFF and PNG
+```{r}
+# Save sparr plot as PNG
+png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
+plot(p_risk, main = "Maternal Death Risk Surface - Kano, Nigeria")
+dev.off()
+
+# Save raw raster as GeoTIFF
+terra::writeRaster(rr_resampled,
+                   "outputs/risk-surface-kano.tiff",
+                   overwrite = TRUE)
 ```
 
 
