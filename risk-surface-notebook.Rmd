@@ -44,7 +44,7 @@ library(viridis)
 
 ## Model outputs
 ```{r read-model-outputs, include=FALSE}
-data <- read.csv("data/model-output-acc-score.csv")
+data <- read.csv("data/model-output-classification.csv")
 head(data)
 ```
 
@@ -183,7 +183,6 @@ pop_ppp    <- spatstat.geom::ppp(
 ### Option A: Fixed bandwidth (run first to verify everything works)
 ```{r risk-fixed}
 rr_fixed <- risk(f = deaths_ppp, g = pop_ppp, doplot = TRUE)
-plot(rr_fixed, main = "Risk Surface - Fixed Bandwidth")
 ```
 
 ### Option B: Geometric bandwidth (recommended)
@@ -198,13 +197,11 @@ rr_geom <- risk(
   tolerate = TRUE,
   doplot   = TRUE
 )
-plot(rr_geom, main = "Risk Surface - Geometric Bandwidth")
-
 ```
 
 ### Option C: Adaptive bandwidth (most accurate, slowest)
 # Set eval=TRUE in chunk header when ready to run - may take 10-30 mins
-```{r risk-adaptive, eval=FALSE}
+```{r risk-adaptive, eval=TRUE}
 hpilot.f <- BOOT.density(deaths_ppp)
 hpilot.g <- BOOT.density(pop_ppp)
 
@@ -218,7 +215,6 @@ rr_adapt <- risk(
   pilot.symmetry  = "pooled",
   davies.baddeley = 0.05
 )
-plot(rr_adapt, main = "Risk Surface - Adaptive Bandwidth")
 ```
 
 
@@ -383,7 +379,7 @@ rr_vec <- as.vector(terra::values(rr_norm, na.rm = TRUE))
 
 # Log-transform Accessibility_standard to address extreme right skew
 # (MinMaxScaler preserves skew - log transform improves visualization)
-acc_log  <- log(data$Accessibility_standard + 1e-10)
+acc_log  <- log(data$Accessibility_Index_Standard + 1e-10)
 acc_min  <- min(acc_log, na.rm = TRUE)
 acc_max  <- max(acc_log, na.rm = TRUE)
 acc_vec  <- as.vector((acc_log - acc_min) / (acc_max - acc_min))
@@ -411,7 +407,6 @@ p_compare <- ggplot(df_combined, aes(x = value, fill = source)) +
   theme(legend.position = "top")
 
 print(p_compare)
-cat("Density plot saved\n")
 ```
 do the correlation analysis
 calculate the number of maternity death in different categories
@@ -427,5 +422,91 @@ New model version? new thresholds and parameters?
 New comparison with the validation data
 
 scatter plot, x will be accessbility score, y is risk surface
+
+```{r}
+# ============================================================
+# Compare accessibility inside vs outside 
+# significant high risk areas
+
+# Step 1: Extract significant areas (p < 0.05) in WGS84
+rr_p_raster <- terra::rast(rr_adapt$P)
+terra::crs(rr_p_raster) <- "ESRI:54009"
+rr_p_wgs84 <- terra::project(rr_p_raster, "EPSG:4326")
+
+# Resample p-value raster to match model output grid
+rr_p_resampled <- terra::resample(rr_p_wgs84, template, method = "bilinear")
+
+# Create binary mask: 1 = significant (p < 0.05), 0 = not significant
+sig_mask <- terra::classify(rr_p_resampled, 
+                             cbind(c(-Inf, 0.05), c(0.05, Inf), c(1, 0)))
+
+# Step 2: Rasterize accessibility score to same grid
+data_sf   <- sf::st_as_sf(data, coords = c("longitude", "latitude"), crs = 4326)
+data_rast <- terra::rasterize(
+  terra::vect(data_sf),
+  template,
+  field = "Accessibility_Index_Standard",
+  fun   = "mean"
+)
+
+# Step 3: Extract accessibility values inside and outside significant areas
+sig_vec <- as.vector(terra::values(sig_mask,  na.rm = FALSE))
+acc_vec <- as.vector(terra::values(data_rast, na.rm = FALSE))
+
+valid   <- !is.na(sig_vec) & !is.na(acc_vec)
+sig_valid <- sig_vec[valid]
+acc_valid <- acc_vec[valid]
+
+inside  <- acc_valid[sig_valid == 1]
+outside <- acc_valid[sig_valid == 0]
+
+cat("Cells inside significant areas:", length(inside), "\n")
+cat("Cells outside significant areas:", length(outside), "\n")
+
+# Step 4: Statistical test
+test_result <- wilcox.test(inside, outside)
+cat("\nMann-Whitney test:\n")
+cat("p-value:", test_result$p.value, "\n")
+cat("\nMedian accessibility inside significant areas: ", 
+    round(median(inside), 6), "\n")
+cat("Median accessibility outside significant areas:", 
+    round(median(outside), 6), "\n")
+
+# Step 5: Violin plot comparison
+df_compare <- data.frame(
+  accessibility = c(inside, outside),
+  area          = c(rep("Significant\nHigh Risk", length(inside)),
+                    rep("Non-significant\nArea",  length(outside)))
+)
+
+p_violin <- ggplot(df_compare, aes(x = area, y = accessibility, fill = area)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  scale_fill_manual(values = c("Significant\nHigh Risk" = "#D6604D",
+                               "Non-significant\nArea"  = "steelblue")) +
+  scale_y_log10() +
+  annotate("text", x = 1.5, y = max(acc_valid, na.rm = TRUE),
+           label = paste0("Mann-Whitney\np = ", 
+                          format(test_result$p.value, digits = 3)),
+           size = 3.5) +
+  labs(
+    title    = "Accessibility Score: Significant vs Non-significant Risk Areas",
+    subtitle = "Significant areas defined by p < 0.05 tolerance contours",
+    x        = "",
+    y        = "Accessibility Score (log scale)",
+    fill     = ""
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 12),
+    plot.subtitle   = element_text(size = 9, color = "grey40"),
+    legend.position = "none"
+  )
+
+print(p_violin)
+```
+
+
+
 
 
