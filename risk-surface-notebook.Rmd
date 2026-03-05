@@ -82,8 +82,6 @@ CRS_MOLLWEIDE <- "ESRI:54009"
 kano_proj            <- sf::st_transform(kano,            crs = CRS_MOLLWEIDE)
 maternal_deaths_proj <- sf::st_transform(maternal_deaths, crs = CRS_MOLLWEIDE)
 population_proj      <- sf::st_transform(population,      crs = CRS_MOLLWEIDE)
-
-cat("All data reprojected to Mollweide\n")
 ```
 
 ## Step 2: Filter maternal deaths to Kano study area
@@ -103,44 +101,44 @@ plot(sf::st_geometry(maternal_deaths_kano), add = TRUE,
      col = "red", pch = 16, cex = 1.2)
 ```
 
-```{r generate-population-points, include=FALSE}
-pop_df <- population[!is.na(population$pop) & population$pop > 0, ]
-```
-
-
-## Step 3: Generate population points from 100m grid centroids
+## Step 3: Generate population points from 100m grid polygons
 #
-# Each centroid represents population within a 100m cell.
-# We generate random points proportional to population value in each cell.
+# Each polygon represents a 100m grid cell with a population value.
+# Random points are generated within each polygon proportional to population.
 # SCALE_FACTOR reduces total point count while preserving relative spatial distribution.
-# pmax(1, ...) ensures every cell contributes at least 1 point.
+# st_sample() places points randomly inside each polygon - no manual cell size needed.
+
+
 ```{r generate-population-points}
-# Remove NA and zero values - cells with no population don't need points
-pop_df <- population[!is.na(population$pop) & population$pop > 0, ]
-cat("Cells with population > 0:", nrow(pop_df), "\n")
-summary(pop_df$pop)
+# Filter out NA and zero population cells
+pop_valid <- population_proj[!is.na(population_proj$pop) & population_proj$pop > 0, ]
+cat("Cells with population > 0:", nrow(pop_valid), "\n")
+cat("Population summary:\n")
+summary(pop_valid$pop)
 
-SCALE_FACTOR    <- 100
-# No pmax(1,...) needed - cells with pop=0 already filtered out
-pop_df$n_points <- round(pop_df$pop / SCALE_FACTOR)
+# Scale down population values proportionally
+SCALE_FACTOR <- 50
+pop_valid[["n_points"]] <- round(pop_valid[["pop"]] / SCALE_FACTOR)
 
-# Filter out any cells that round down to 0
-pop_df <- pop_df[pop_df$n_points > 0, ]
-cat("Total points to generate:", sum(pop_df$n_points), "\n")
+# Filter out cells that round down to 0
+pop_valid <- pop_valid[!is.na(pop_valid[["n_points"]]) & pop_valid[["n_points"]] > 0, ]
+cat("Cells to process:", nrow(pop_valid), "\n")
+cat("Total points to generate:", sum(pop_valid[["n_points"]]), "\n")
 
-cell_size <- 100
-
+# Generate random points within each polygon
 set.seed(42)
-points_list <- lapply(1:nrow(pop_df), function(i) {
-  n <- pop_df$n_points[i]
+points_list <- lapply(1:nrow(pop_valid), function(i) {
+  n    <- pop_valid[["n_points"]][i]
+  bbox <- sf::st_bbox(pop_valid[i, ])
   data.frame(
-    x = runif(n, pop_df$x[i] - cell_size/2, pop_df$x[i] + cell_size/2),
-    y = runif(n, pop_df$y[i] - cell_size/2, pop_df$y[i] + cell_size/2)
+    x = runif(n, bbox["xmin"], bbox["xmax"]),
+    y = runif(n, bbox["ymin"], bbox["ymax"])
   )
 })
 
 points_df   <- do.call(rbind, points_list)
-womenrepage <- sf::st_as_sf(points_df, coords = c("x", "y"), crs = CRS_MOLLWEIDE)
+womenrepage <- sf::st_as_sf(points_df, coords = c("x", "y"),
+                             crs = sf::st_crs(population_proj))
 
 cat("Population points generated:", nrow(womenrepage), "\n")
 ```
@@ -157,7 +155,6 @@ cat("Population points generated:", nrow(womenrepage), "\n")
 ```{r build-window}
 kano_poly   <- sf::st_cast(kano_proj, "POLYGON")
 kano_window <- spatstat.geom::as.owin(kano_poly)
-cat("Window class:", class(kano_window), "\n")
 ```
 ## Step 5: Create PPP objects
 
@@ -169,8 +166,6 @@ deaths_ppp    <- spatstat.geom::ppp(
   y      = deaths_coords[, 2],
   window = kano_window
 )
-cat("Deaths PPP:\n")
-summary(deaths_ppp)
 ```
 
 ```{r create-controls-ppp}
@@ -181,7 +176,6 @@ pop_ppp    <- spatstat.geom::ppp(
   y      = pop_coords[, 2],
   window = kano_window
 )
-summary(pop_ppp)
 ```
 
 ## Step 6: Estimate risk surface
@@ -247,21 +241,12 @@ kano_sf <- sf::st_as_sf(kano_proj)
 
 # ============================================================
 # Main risk surface plot
-
 p_risk <- ggplot() +
   tidyterra::geom_spatraster(data = rr_raster) +
-  scale_fill_gradient2(
-    low      = "#2166AC",
-    mid      = "white",
-    high     = "#D6604D",
-    midpoint = 0,
+  scale_fill_gradientn(
+    colours  = c("#000080", "#0000FF", "#00FFFF", "#FFFF00", "#FF8000", "#FF0000"),
     na.value = "transparent",
-    name     = "Log Risk Ratio",
-    guide    = guide_colorbar(
-      barwidth       = 0.8,
-      barheight      = 8,
-      title.position = "top"
-    )
+    name     = "Log Risk\nRatio"
   ) +
   geom_sf(data = kano_sf,
           fill      = NA,
@@ -295,19 +280,36 @@ p_risk <- ggplot() +
     title    = "Maternal Death Risk Surface — Kano, Nigeria",
     subtitle = "Kernel density ratio (adaptive bandwidth)\nBlack contours indicate p < 0.05 significance"
   ) +
+  theme_void(base_size = 11) +
   theme(
     plot.title      = element_text(face = "bold", size = 13, hjust = 0.5),
     plot.subtitle   = element_text(size = 9, color = "grey40", hjust = 0.5),
-    plot.caption    = element_text(size = 7, color = "grey50", hjust = 0),
     legend.position = "right",
     legend.title    = element_text(size = 8, face = "bold"),
     legend.text     = element_text(size = 7),
-    plot.margin     = margin(10, 20, 10, 20))
+    plot.margin     = margin(10, 20, 10, 20)
+  )
 
 print(p_risk)
 ```
 
-## Step 7: Resample risk surface to match model output resolution
+## Step 7: Save as GeoTIFF and PNG
+
+```{r export}
+# Save original sparr plot as PNG
+png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
+plot(rr_adapt, main = "Maternal Death Risk Surface - Kano, Nigeria")
+dev.off()
+
+# Save resampled raster as GeoTIFF
+ggsave("outputs/risk-surface-kano-journal.tiff",
+       plot  = p_risk,
+       width = 8,
+       height = 7,
+       dpi   = 300)
+```
+
+## Step 8: Resample risk surface to match model output resolution
 #
 # rr_adapt is computed in Mollweide (metres).
 # Model output grid is in WGS84 degrees at ~100m resolution.
@@ -341,22 +343,6 @@ rr_resampled <- terra::resample(rr_wgs84, template, method = "bilinear")
 
 cat("Original resolution:", terra::res(rr_wgs84), "\n")
 cat("Resampled resolution:", terra::res(rr_resampled), "\n")
-```
-
-## Step 8: Save as GeoTIFF and PNG
-
-```{r export}
-# Save original sparr plot as PNG
-png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
-plot(rr_adapt, main = "Maternal Death Risk Surface - Kano, Nigeria")
-dev.off()
-cat("PNG saved to outputs/risk-surface-kano.png\n")
-
-# Save resampled raster as GeoTIFF
-terra::writeRaster(rr_resampled,
-                   "outputs/risk-surface-kano.tif",
-                   overwrite = TRUE)
-cat("GeoTIFF saved to outputs/risk-surface-kano.tif\n")
 ```
 
 
@@ -437,3 +423,7 @@ Second, Risk surface comparison
 Third,
 New model version? new thresholds and parameters?
 New comparison with the validation data
+
+scatter plot, x will be accessbility score, y is risk surface
+
+
