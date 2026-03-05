@@ -1,6 +1,8 @@
 ---
 title: "Estimating Risk Surface"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 # Preliminary tasks 
@@ -101,6 +103,11 @@ plot(sf::st_geometry(maternal_deaths_kano), add = TRUE,
      col = "red", pch = 16, cex = 1.2)
 ```
 
+```{r generate-population-points, include=FALSE}
+pop_df <- population[!is.na(population$pop) & population$pop > 0, ]
+```
+
+
 ## Step 3: Generate population points from 100m grid centroids
 #
 # Each centroid represents population within a 100m cell.
@@ -109,7 +116,7 @@ plot(sf::st_geometry(maternal_deaths_kano), add = TRUE,
 # pmax(1, ...) ensures every cell contributes at least 1 point.
 ```{r generate-population-points}
 # Remove NA and zero values - cells with no population don't need points
-pop_df <- pop_df[!is.na(pop_df$pop) & pop_df$pop > 0, ]
+pop_df <- population[!is.na(population$pop) & population$pop > 0, ]
 cat("Cells with population > 0:", nrow(pop_df), "\n")
 summary(pop_df$pop)
 
@@ -418,5 +425,15 @@ p_compare <- ggplot(df_combined, aes(x = value, fill = source)) +
 print(p_compare)
 cat("Density plot saved\n")
 ```
+do the correlation analysis
+calculate the number of maternity death in different categories
+new model vision (improve the thresholds)- check with par result and maternal death
+compare two vision of model outputs
 
 
+
+First, absolute deaths / categories
+Second, Risk surface comparison
+Third,
+New model version? new thresholds and parameters?
+New comparison with the validation data
