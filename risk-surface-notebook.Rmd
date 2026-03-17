@@ -23,8 +23,12 @@ Key optimisations applied:
 
 There is a selection of packages required for the risk surface analysys. Among them, geospatial data management packages and "sparr".
 ```{r install-packages, include=FALSE, eval=FALSE}
-# Only run once - set eval=FALSE after first run
-install.packages(c('sparr', 'terra', 'sf', 'spatstat', 'dplyr', 'ggplot2', "tidyterra", "ggspatial", "viridis", "cowplot", "rlang"))
+# Run once, then set eval=FALSE
+install.packages(c(
+  "sparr", "terra", "sf", "spatstat", "dplyr", "ggplot2",
+  "tidyterra", "ggspatial", "viridis", "cowplot", "rlang",
+  "spdep", "rgeoda", "dunn.test"
+))
 ```
 
 ### Load required packages
@@ -40,6 +44,8 @@ library(ggspatial)
 library(cowplot)
 library(viridis)
 library(spdep)     # Added to estimate local Moran's and bivariate local Moran's
+library(rgeoda)
+library(dunn.test)
 ```
 ---
 
@@ -50,6 +56,13 @@ This data set contains the outputs for the "Emergency Obstetric Care Access Depr
 ```{r read-model-outputs, include=FALSE}
 data <- read.csv("data/model-output-classification.csv")
 head(data)
+```
+
+## Model outputs
+load geopackage
+```{r model-outputs, include=FALSE}
+model_outputs <- sf::st_read("data/model-output-classification.gpkg", quiet = TRUE)
+head(model_outputs)
 ```
 
 ## Maternal deaths (Cases)
@@ -73,38 +86,40 @@ head(population)
 
 ---
 
-# Main Analysis: Maternal Death Risk Surface in Kano
+# Main Analysis
 
-## Step 1: Reproject all data to Mollweide
+## Step 1 — Reproject to Mollweide
 
-Mollweide (ESRI:54009) is an equal-area projection suitable for spatial analysis.
-spatstat's as.owin() requires a projected coordinate system (metres), not WGS84 units degrees.
-All datasets must use the same CRS for ppp objects to align correctly.
+Equal-area projection required by `spatstat`; all layers must share the same CRS.
 
-```{r reproject-data, include=FALSE}
+```{r reproject, include=FALSE}
 CRS_MOLLWEIDE <- "ESRI:54009"
 
 kano_proj            <- sf::st_transform(kano,            crs = CRS_MOLLWEIDE)
 maternal_deaths_proj <- sf::st_transform(maternal_deaths, crs = CRS_MOLLWEIDE)
 population_proj      <- sf::st_transform(population,      crs = CRS_MOLLWEIDE)
+model_proj           <- sf::st_transform(model_outputs,   crs = CRS_MOLLWEIDE)
 ```
 
-## Step 2: Filter maternal deaths to Kano study area
+## Step 2 — Clip deaths to 10 km study-area buffer
 
-maternal_deaths contains records from the wider Kano region.
-Deaths outside the study area boundary have no corresponding
-population Controls and would bias the risk surface upward.
+Deaths outside the study boundary have no matching population controls
+and would inflate the risk surface.
 
-```{r filter-deaths, include=TRUE}
-maternal_deaths_kano <- sf::st_filter(maternal_deaths_proj, kano_proj)
-cat("Deaths within Kano study area:", nrow(maternal_deaths_kano),
-    "out of", nrow(maternal_deaths_proj), "\n")
+```{r clip-deaths}
+kano_buffer         <- sf::st_buffer(kano_proj, dist = 10000)
+maternal_deaths_kano <- sf::st_filter(maternal_deaths_proj, kano_buffer)
 
-# Visual check
-plot(sf::st_geometry(kano_proj), main = "Maternal Deaths within Kano Study Area")
-plot(sf::st_geometry(maternal_deaths_kano), add = TRUE,
-     col = "red", pch = 16, cex = 0.8)
+cat("Deaths retained:", nrow(maternal_deaths_kano),
+    "of", nrow(maternal_deaths_proj), "\n")
+
+# Quick visual check
+plot(sf::st_geometry(kano_buffer),
+     main = "Maternal Deaths — 10 km Buffer", border = "grey50", lty = 2)
+plot(sf::st_geometry(kano_proj),        add = TRUE, border = "black")
+plot(sf::st_geometry(maternal_deaths_kano), add = TRUE, col = "red", pch = 16, cex = 0.8)
 ```
+
 
 ## Step 3: Generate population points from 100m grid polygons
 
@@ -113,27 +128,21 @@ Random points are generated within each polygon proportional to population.
 SCALE_FACTOR reduces total point count while preserving relative spatial distribution.
 st_sample() places points randomly inside each polygon - no manual cell size needed.
 
+Points are placed randomly inside each 100 m grid cell, proportional to population
+(`SCALE_FACTOR = 10` reduces total count while preserving spatial distribution).
 
-```{r generate-population-points, include=TRUE}
-# Filter out NA and zero population cells
-pop_valid <- population_proj[!is.na(population_proj$pop) & population_proj$pop > 0, ]
-cat("Cells with population > 0:", nrow(pop_valid), "\n")
-cat("Population summary:\n")
-summary(pop_valid$pop)
+```{r generate-pop-points}
+pop_valid <- population_proj |>
+  dplyr::filter(!is.na(pop), pop > 0) |>
+  dplyr::mutate(n_points = round(pop / 10)) |>
+  dplyr::filter(n_points > 0)
 
-# Scale down population values proportionally
-SCALE_FACTOR <- 10
-pop_valid[["n_points"]] <- round(pop_valid[["pop"]] / SCALE_FACTOR)
+cat("Cells used:", nrow(pop_valid),
+    "| Points to generate:", sum(pop_valid$n_points), "\n")
 
-# Filter out cells that round down to 0
-pop_valid <- pop_valid[!is.na(pop_valid[["n_points"]]) & pop_valid[["n_points"]] > 0, ]
-cat("Cells to process:", nrow(pop_valid), "\n")
-cat("Total points to generate:", sum(pop_valid[["n_points"]]), "\n")
-
-# Generate random points within each polygon
 set.seed(42)
-points_list <- lapply(1:nrow(pop_valid), function(i) {
-  n    <- pop_valid[["n_points"]][i]
+points_list <- lapply(seq_len(nrow(pop_valid)), function(i) {
+  n    <- pop_valid$n_points[i]
   bbox <- sf::st_bbox(pop_valid[i, ])
   data.frame(
     x = runif(n, bbox["xmin"], bbox["xmax"]),
@@ -141,9 +150,11 @@ points_list <- lapply(1:nrow(pop_valid), function(i) {
   )
 })
 
-points_df   <- do.call(rbind, points_list)
-womenrepage <- sf::st_as_sf(points_df, coords = c("x", "y"),
-                             crs = sf::st_crs(population_proj))
+womenrepage <- sf::st_as_sf(
+  do.call(rbind, points_list),
+  coords = c("x", "y"),
+  crs    = sf::st_crs(population_proj)
+)
 
 cat("Population points generated:", nrow(womenrepage), "\n")
 ```
@@ -157,9 +168,12 @@ ensures the risk surface matches the study area shape exactly.
 This requires projected coordinates - hence the UTM reprojection above.
 
 
+## Step 4 — Build observation window
+
+Uses the actual buffered boundary polygon (not a bounding box).
+
 ```{r build-window, include=FALSE}
-kano_poly   <- sf::st_cast(kano_proj, "POLYGON")
-kano_window <- spatstat.geom::as.owin(kano_poly)
+kano_window <- spatstat.geom::as.owin(sf::st_cast(kano_buffer, "POLYGON"))
 ```
 
 
@@ -226,404 +240,310 @@ rr_adapt <- risk(
   pilot.symmetry  = "pooled",
   davies.baddeley = 0.05
 )
+
+plot(rr_adapt, main = "Risk Surface - Adaptive Bandwidth")
 ```
 
+## Step 7 — Map risk surface (ggplot)
 
-```{r plot-risk-surface-, include=TRUE}
-# Prepare data for ggplot
+```{r plot-risk-surface}
+# Convert to terra rasters and set CRS
+rr_raster <- terra::rast(rr_adapt$rr); terra::crs(rr_raster) <- "ESRI:54009"
+rr_p      <- terra::rast(rr_adapt$P);  terra::crs(rr_p)      <- "ESRI:54009"
 
-# Convert rr_adapt risk surface to terra raster
-rr_raster <- terra::rast(rr_adapt$rr)
-terra::crs(rr_raster) <- "ESRI:54009"
+# Crop and mask to study area
+rr_raster <- terra::mask(terra::crop(rr_raster, terra::vect(kano_proj)), terra::vect(kano_proj))
+rr_p      <- terra::mask(terra::crop(rr_p,      terra::vect(kano_proj)), terra::vect(kano_proj))
 
-# Convert significance surface (p-values)
-rr_p <- terra::rast(rr_adapt$P)
-terra::crs(rr_p) <- "ESRI:54009"
-
-# Create significance mask (p < 0.05)
-sig_mask <- rr_p < 0.05
-
-# Convert kano boundary to sf for plotting
 kano_sf <- sf::st_as_sf(kano_proj)
 
-# ============================================================
-# Main risk surface plot
 p_risk <- ggplot() +
   tidyterra::geom_spatraster(data = rr_raster) +
   scale_fill_gradientn(
-    colours  = c("#000080", "#800080", "#FF0000", "#ff4500", "#FF8000", "#FFFF00"),
+    colours  = c("#000080", "#800080", "#FF0000", "#FF4500", "#FF8000", "#FFFF00"),
     na.value = "transparent",
     name     = "Log Risk\nRatio"
   ) +
-  geom_sf(data = kano_sf,
-          fill      = NA,
-          color     = "black",
-          linewidth = 0.5) +
+  geom_sf(data = kano_sf, fill = NA, color = "black", linewidth = 0.5) +
   tidyterra::geom_spatraster_contour(
-    data      = rr_p,
-    breaks    = 0.05,
-    color     = "black",
-    linewidth = 0.6
+    data = rr_p, breaks = 0.05, color = "black", linewidth = 0.6
   ) +
-  geom_sf(data   = maternal_deaths_kano,
-          color  = "black",
-          fill   = "yellow",
-          shape  = 21,
-          size   = 1.5,
-          stroke = 0.4) +
-  ggspatial::annotation_scale(
-    location   = "bl",
-    width_hint = 0.2,
-    text_cex   = 0.7
-  ) +
+  geom_sf(data = maternal_deaths_kano,
+          color = "black", fill = "yellow", shape = 21, size = 1.5, stroke = 0.4) +
+  ggspatial::annotation_scale(location = "bl", width_hint = 0.2, text_cex = 0.7) +
   ggspatial::annotation_north_arrow(
-    location    = "br",
-    which_north = "true",
-    pad_x       = unit(0.1, "in"),
-    pad_y       = unit(0.1, "in"),
+    location    = "br", which_north = "true",
+    pad_x       = unit(0.1, "in"), pad_y = unit(0.1, "in"),
     style       = north_arrow_fancy_orienteering(text_size = 6)
   ) +
   labs(
     title    = "Maternal Death Risk Surface — Kano, Nigeria",
-    subtitle = "Kernel density ratio (adaptive bandwidth)\nBlack contours indicate p < 0.05 significance"
+    subtitle = "Kernel density ratio (adaptive bandwidth) | Contours: p < 0.05"
   ) +
   theme_void(base_size = 11) +
   theme(
-    plot.title      = element_text(face = "bold", size = 13, hjust = 0.5),
-    plot.subtitle   = element_text(size = 9, color = "grey40", hjust = 0.5),
-    legend.position = "right",
-    legend.title    = element_text(size = 8, face = "bold"),
-    legend.text     = element_text(size = 7),
-    plot.margin     = margin(10, 20, 10, 20)
+    plot.title    = element_text(face = "bold", size = 13, hjust = 0.5),
+    plot.subtitle = element_text(size = 9, color = "grey40", hjust = 0.5),
+    legend.position = "right"
   )
 
 print(p_risk)
 ```
+## Step 8 — Normalize risk surface
+
+```{r normalize, include=FALSE}
+# Min-max normalization to [0, 1]
+rr_min  <- terra::global(rr_raster, "min", na.rm = TRUE)$min
+rr_max  <- terra::global(rr_raster, "max", na.rm = TRUE)$max
+rr_norm <- (rr_raster - rr_min) / (rr_max - rr_min)
+
+cat("Normalized range: [",
+    terra::global(rr_norm, "min", na.rm = TRUE)$min, ",",
+    terra::global(rr_norm, "max", na.rm = TRUE)$max, "]\n")
+```
+
+## Step 9 — Extract risk at model grid centroids
+
+Risk values are extracted at each model grid cell centroid.
+This aligns the coarse risk raster (~500m) with the finer model grid,
+avoiding resolution mismatch problems that arise from rasterizing in the
+opposite direction.
+
+```{r extract-risk-at-model, include=FALSE}
+# Compute centroids of model grid polygons (Mollweide)
+model_pts     <- sf::st_centroid(model_proj)
+
+# Extract normalized risk value at each centroid
+risk_at_model <- terra::extract(rr_norm, terra::vect(model_pts))[, 2]
+
+cat("Model grid cells:", length(risk_at_model), "\n")
+cat("Cells with valid risk:", sum(!is.na(risk_at_model)), "\n")
+```
 
 
+# Comparative Analysis
 
-## Step 7: Resample risk surface to match model output resolution
+## Risk surface vs Accessibility Score — density comparison
 
-rr_adapt is computed in Mollweide (ESRI:54009).
-Convert to WGS84 for compatibility with other datasets and GIS software.
-No resampling - bandwidth (~4747m) determines the natural resolution of
-the risk surface regardless of input data resolution.
-```{r resample-risk-surface, include=FALSE}
-# Convert to terra raster and set Mollweide CRS
-rr_raster <- terra::rast(rr_adapt$rr)
-terra::crs(rr_raster) <- "ESRI:54009"
+Each variable is extracted independently: risk from the raster, accessibility from
+the model grid attribute table. Log-transformation corrects right skew in accessibility.
 
-# Also extract significance surface
-rr_p <- terra::rast(rr_adapt$P)
-terra::crs(rr_p) <- "ESRI:54009"
+```{r density-comparison}
+# Risk: valid pixels from normalized raster
+rr_vec <- as.vector(terra::values(rr_norm, na.rm = TRUE))
 
-# Reproject to WGS84
+# Accessibility: directly from model attribute table, log-normalised
+acc_valid <- model_proj$Accessibility_Index_Standard
+acc_valid <- acc_valid[!is.na(acc_valid)]
+acc_log   <- log(acc_valid + 1e-10)
+acc_vec   <- (acc_log - min(acc_log)) / (max(acc_log) - min(acc_log))
+
+df_combined <- data.frame(
+  value  = c(rr_vec, acc_vec),
+  source = rep(c("Risk Surface", "Accessibility Score"),
+               c(length(rr_vec), length(acc_vec)))
+)
+
+neutral_val <- (0 - rr_min) / (rr_max - rr_min)
+
+ggplot(df_combined, aes(x = value, fill = source)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = neutral_val, linetype = "dashed", color = "black") +
+  annotate("text", x = neutral_val, y = Inf, vjust = 2, hjust = -0.1,
+           label = "log RR = 0\n(no excess risk)", size = 3.2, color = "grey30") +
+  scale_fill_manual(values = c("Risk Surface"        = "orange",
+                               "Accessibility Score" = "steelblue")) +
+  labs(
+    title    = "Risk Surface vs Accessibility Score — Kano, Nigeria",
+    subtitle = "Risk = normalized log RR | Accessibility log-transformed | Dashed line = no excess risk",
+    x = "Normalized Value", y = "Density", fill = ""
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+
+## Scatter plot — grid cell level correlation
+
+```{r scatter-correlation}
+vals <- data.frame(
+  risk = risk_at_model,
+  acc  = model_proj$Accessibility_Index_Standard
+) |> na.omit()
+
+r_val  <- round(cor(vals$risk, vals$acc, method = "spearman"), 3)
+r2_val <- round(r_val^2, 3)
+
+ggplot(vals, aes(x = risk, y = acc)) +
+  geom_point(alpha = 0.3, size = 1.2, color = "#2E86AB") +
+  geom_smooth(method = "lm", color = "#E84855", linewidth = 1, se = TRUE) +
+  annotate("text", x = Inf, y = -Inf, hjust = 1.1, vjust = -1,
+           label = paste0("ρ = ", r_val, "\nρ² = ", r2_val),
+           size = 4.5, color = "grey20") +
+  labs(
+    title    = "Mortality Risk vs Accessibility — grid cell level",
+    subtitle = "Each point = one model grid cell centroid | Spearman correlation",
+    x = "Normalized Log Risk Ratio", y = "Accessibility Score"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title    = element_text(face = "bold"),
+        plot.subtitle = element_text(color = "grey40"))
+```
+
+
+## Risk by deprivation category
+
+```{r risk-by-deprivation}
+df_dep <- data.frame(
+  risk        = risk_at_model,
+  deprivation = model_proj$result
+) |>
+  na.omit() |>
+  dplyr::mutate(deprivation = factor(deprivation,
+    levels = 0:2,
+    labels = c("Low Deprivation", "Medium Deprivation", "High Deprivation")
+  ))
+
+cat("Cell counts:\n"); print(table(df_dep$deprivation))
+
+kw <- kruskal.test(risk ~ deprivation, data = df_dep)
+cat("\nKruskal-Wallis p =", kw$p.value, "\n")
+cat("\nMedian risk by group:\n")
+print(tapply(df_dep$risk, df_dep$deprivation, median))
+
+ggplot(df_dep, aes(x = deprivation, y = risk, fill = deprivation)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  scale_fill_manual(values = c(
+    "Low Deprivation"    = "steelblue",
+    "Medium Deprivation" = "orange",
+    "High Deprivation"   = "#D6604D"
+  )) +
+  annotate("text", x = 2, y = 0.95,
+           label = paste0("Kruskal-Wallis\np = ", format(kw$p.value, digits = 3)),
+           size = 3.5) +
+  labs(
+    title = "Maternal Death Risk by Deprivation Category — Kano, Nigeria",
+    x = "", y = "Normalized Risk Surface", fill = ""
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title      = element_text(face = "bold", size = 12),
+        legend.position = "none")
+```
+
+### Pairwise Dunn test (Bonferroni correction)
+
+```{r dunn-test}
+dunn.test(df_dep$risk, df_dep$deprivation, method = "bonferroni")
+```
+
+---
+# Spatial Autocorrelation
+
+## Bivariate Local Moran's I — Risk × Accessibility
+
+Analysis units are the risk raster pixels (~500m), which match the effective
+spatial resolution of the kernel density estimate. Accessibility is aggregated
+(mean) from the finer model grid onto each risk pixel. This ensures both
+variables share the same spatial scale, avoiding artificial autocorrelation
+from inserting identical risk values into many smaller grid cells.
+
+```{r bivariate-lisa}
+# Convert risk raster pixels to polygons
+lisa_poly <- terra::as.polygons(rr_raster, dissolve = FALSE)
+names(lisa_poly)[1] <- "risk"
+
+# Aggregate accessibility — single mean at extract step only
+acc_rast <- terra::rasterize(terra::vect(model_proj), rr_norm,
+                             field = "Accessibility_Index_Standard")
+lisa_poly$acc <- terra::extract(acc_rast, lisa_poly, fun = mean, na.rm = TRUE)[, 2]
+
+# Convert to sf, drop NA
+lisa_sf <- sf::st_as_sf(lisa_poly) |> na.omit()
+cat("Valid pixels for LISA:", nrow(lisa_sf), "\n")
+
+# Invert acc so high = high deprivation (aligns with risk direction)
+lisa_sf$acc_inv <- 1 - lisa_sf$acc
+
+# Queen contiguity weights
+queen_w <- rgeoda::queen_weights(lisa_sf)
+
+# Bivariate Local Moran's I: risk (x) vs inverted accessibility (y)
+biv_lisa <- rgeoda::local_bimoran(queen_w, lisa_sf[, c("risk", "acc_inv")])
+
+# Attach cluster labels
+lisa_sf$cluster <- factor(
+  rgeoda::lisa_clusters(biv_lisa, cutoff = 0.05),
+  levels = c(1, 2, 3, 4, 0),
+  labels = c("High-High", "Low-Low", "Low-High", "High-Low", "Not Significant")
+)
+
+cat("\nCluster counts:\n"); print(table(lisa_sf$cluster))
+
+# Reproject to WGS84 for plotting
+lisa_wgs84 <- sf::st_transform(lisa_sf, crs = 4326)
+
+cluster_colors <- c(
+  "High-High"       = "#D6604D",
+  "Low-Low"         = "#4393C3",
+  "Low-High"        = "#92C5DE",
+  "High-Low"        = "#F4A582",
+  "Not Significant" = "grey85"
+)
+
+ggplot() +
+  geom_sf(data = lisa_wgs84, aes(fill = cluster), color = NA) +
+  geom_sf(data = sf::st_transform(kano, crs = 4326),
+          fill = NA, color = "black", linewidth = 0.5) +
+  scale_fill_manual(values = cluster_colors, name = "Bivariate\nLISA") +
+  ggspatial::annotation_scale(location = "bl", width_hint = 0.2) +
+  ggspatial::annotation_north_arrow(
+    location = "br",
+    style    = north_arrow_fancy_orienteering(text_size = 6)
+  ) +
+  guides(fill = guide_legend(override.aes = list(color = NA))) +
+  labs(
+    title    = "Bivariate LISA — Maternal Death Risk vs Accessibility Deprivation",
+    subtitle = "High-High = high risk + high deprivation (priority areas) | p < 0.05"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold"),
+    plot.subtitle   = element_text(color = "grey40", size = 9),
+    legend.key.size = unit(0.8, "cm")
+  )
+```
+
+# Save Outputs
+
+```{r save-outputs, include=FALSE}
+dir.create("outputs", showWarnings = FALSE)
+
+# Reproject risk raster to WGS84 and resample to model grid resolution
 rr_wgs84 <- terra::project(rr_raster, "EPSG:4326")
-rp_wgs84 <- terra::project(rr_p, "EPSG:4326")
 
-# Resample risk surface to 100m and save GeoTIFF
-# Extract resolution from model output grid
-res_x <- mean(data$lon_max - data$lon_min)
-res_y <- mean(data$lat_max - data$lat_min)
-
-# Create template matching model output grid exactly
+res_x    <- mean(model_outputs$lon_max - model_outputs$lon_min)
+res_y    <- mean(model_outputs$lat_max - model_outputs$lat_min)
 template <- terra::rast(
-  xmin       = min(data$lon_min),
-  xmax       = max(data$lon_max),
-  ymin       = min(data$lat_min),
-  ymax       = max(data$lat_max),
+  xmin       = min(model_outputs$lon_min),
+  xmax       = max(model_outputs$lon_max),
+  ymin       = min(model_outputs$lat_min),
+  ymax       = max(model_outputs$lat_max),
   resolution = c(res_x, res_y),
   crs        = "EPSG:4326"
 )
 
-# Resample to 100m
 rr_resampled <- terra::resample(rr_wgs84, template, method = "bilinear")
-rp_resampled <- terra::resample(rp_wgs84, template, method = "bilinear")
-```
+cat("Saved raster resolution:", terra::res(rr_resampled), "\n")
 
-## Step 8: Save as GeoTIFF and PNG
-```{r save-risk-surface, include=FALSE}
-# Save sparr plot as PNG
+# PNG map
 png("outputs/risk-surface-kano.png", width = 1200, height = 900, res = 150)
-plot(p_risk, main = "Maternal Death Risk Surface - Kano, Nigeria")
+print(p_risk)
 dev.off()
 
-# Save raw raster as GeoTIFF
-terra::writeRaster(rr_resampled,
-                   "outputs/risk-surface-kano.tiff",
-                   overwrite = TRUE)
-terra::writeRaster(rp_resampled,
-                   "outputs/risk-surface-pvalue-kano.tiff",
-                   overwrite = TRUE)
+# GeoTIFF (WGS84, model grid resolution)
+terra::writeRaster(rr_resampled, "outputs/risk-surface-kano.tif", overwrite = TRUE)
 ```
-
-
-
-## Step 9: Normalize risk surface to 0-1
-
-```{r normalize-risk-surface, include=FALSE}
-rr_min  <- terra::global(rr_resampled, "min", na.rm = TRUE)$min
-rr_max  <- terra::global(rr_resampled, "max", na.rm = TRUE)$max
-rr_norm <- (rr_resampled - rr_min) / (rr_max - rr_min)
-
-cat("Normalized min:", terra::global(rr_norm, "min", na.rm = TRUE)$min, "\n")
-cat("Normalized max:", terra::global(rr_norm, "max", na.rm = TRUE)$max, "\n")
-```
-
-## Step 10: Density plot comparison - Risk Surface vs Accessibility Score
-
-```{r risk-surface-density-comparison, include=TRUE}
-# Extract normalized risk surface values
-rr_vec <- as.vector(terra::values(rr_norm, na.rm = TRUE))
-
-# Log-transform Accessibility_standard to address extreme right skew
-# (MinMaxScaler preserves skew - log transform improves visualization)
-acc_log  <- log(data$Accessibility_Index_Standard + 1e-10)
-acc_min  <- min(acc_log, na.rm = TRUE)
-acc_max  <- max(acc_log, na.rm = TRUE)
-acc_vec  <- as.vector((acc_log - acc_min) / (acc_max - acc_min))
-
-# Combined density plot
-df_combined <- data.frame(
-  value  = c(rr_vec, acc_vec),
-  source = c(rep("Risk Surface",        length(rr_vec)),
-             rep("Accessibility Score", length(acc_vec)))
-)
-
-p_compare <- ggplot(df_combined, aes(x = value, fill = source)) +
-  geom_density(alpha = 0.5) +
-  geom_vline(xintercept = 0.5, linetype = "dashed", color = "black") +
-  scale_fill_manual(values = c("Risk Surface"        = "orange",
-                               "Accessibility Score" = "steelblue")) +
-  labs(
-    title    = "Risk Surface vs Accessibility Score - Kano, Nigeria",
-    subtitle = "Both normalized to 0-1 (Accessibility Score log-transformed for visualization)",
-    x        = "Normalized Value (0-1)",
-    y        = "Density",
-    fill     = ""
-  ) +
-  theme_minimal() +
-  theme(legend.position = "top")
-
-print(p_compare)
-```
-do the correlation analysis
-calculate the number of maternity death in different categories
-new model vision (improve the thresholds)- check with par result and maternal death
-compare two vision of model outputs
-
-
-
-First, absolute deaths / categories
-Second, Risk surface comparison
-Third,
-New model version? new thresholds and parameters?
-New comparison with the validation data
-
-scatter plot, x will be accessbility score, y is risk surface
-
-```{r}
-# ============================================================
-# Compare accessibility inside vs outside 
-# significant high risk areas
-
-# Step 1: Extract significant areas (p < 0.05) in WGS84
-rr_p_raster <- terra::rast(rr_adapt$P)
-terra::crs(rr_p_raster) <- "ESRI:54009"
-rr_p_wgs84 <- terra::project(rr_p_raster, "EPSG:4326")
-
-# Resample p-value raster to match model output grid
-rr_p_resampled <- terra::resample(rr_p_wgs84, template, method = "bilinear")
-
-# Create binary mask: 1 = significant (p < 0.05), 0 = not significant
-sig_mask <- terra::classify(rr_p_resampled, 
-                             cbind(c(-Inf, 0.05), c(0.05, Inf), c(1, 0)))
-
-# Step 2: Rasterize accessibility score to same grid
-data_sf   <- sf::st_as_sf(data, coords = c("longitude", "latitude"), crs = 4326)
-data_rast <- terra::rasterize(
-  terra::vect(data_sf),
-  template,
-  field = "Accessibility_Index_Standard",
-  fun   = "mean"
-)
-
-# Step 3: Extract accessibility values inside and outside significant areas
-sig_vec <- as.vector(terra::values(sig_mask,  na.rm = FALSE))
-acc_vec <- as.vector(terra::values(data_rast, na.rm = FALSE))
-
-valid   <- !is.na(sig_vec) & !is.na(acc_vec)
-sig_valid <- sig_vec[valid]
-acc_valid <- acc_vec[valid]
-
-inside  <- acc_valid[sig_valid == 1]
-outside <- acc_valid[sig_valid == 0]
-
-cat("Cells inside significant areas:", length(inside), "\n")
-cat("Cells outside significant areas:", length(outside), "\n")
-
-# Step 4: Statistical test
-test_result <- wilcox.test(inside, outside)
-cat("\nMann-Whitney test:\n")
-cat("p-value:", test_result$p.value, "\n")
-cat("\nMedian accessibility inside significant areas: ", 
-    round(median(inside), 6), "\n")
-cat("Median accessibility outside significant areas:", 
-    round(median(outside), 6), "\n")
-
-# Step 5: Violin plot comparison
-df_compare <- data.frame(
-  accessibility = c(inside, outside),
-  area          = c(rep("Significant\nHigh Risk", length(inside)),
-                    rep("Non-significant\nArea",  length(outside)))
-)
-
-p_violin <- ggplot(df_compare, aes(x = area, y = accessibility, fill = area)) +
-  geom_violin(alpha = 0.7, trim = FALSE) +
-  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
-  scale_fill_manual(values = c("Significant\nHigh Risk" = "#D6604D",
-                               "Non-significant\nArea"  = "steelblue")) +
-  scale_y_log10() +
-  annotate("text", x = 1.5, y = max(acc_valid, na.rm = TRUE),
-           label = paste0("Mann-Whitney\np = ", 
-                          format(test_result$p.value, digits = 3)),
-           size = 3.5) +
-  labs(
-    title    = "Accessibility Score: Significant vs Non-significant Risk Areas",
-    subtitle = "Significant areas defined by p < 0.05 tolerance contours",
-    x        = "",
-    y        = "Accessibility Score (log scale)",
-    fill     = ""
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    plot.title      = element_text(face = "bold", size = 12),
-    plot.subtitle   = element_text(size = 9, color = "grey40"),
-    legend.position = "none"
-  )
-
-print(p_violin)
-```
-
-
-
-Step 10:
-
-
-```{r}
-
-
-
-# --- Extract pixel/ values ---
-vals1 <- values(rr_resampled, na.rm = FALSE)
-#vals1 <- values(rp_resampled, na.rm = FALSE)
-vals2 <- values(data_rast, na.rm = FALSE)
-
-# --- Combine into a data frame and remove NA pairs ---
-df <- data.frame(
-  raster1 = as.vector(vals1),
-  raster2 = as.vector(vals2)
-)
-df <- na.omit(df)
-
-# --- Compute correlation ---
-r_val   <- round(cor(df$raster1, df$raster2), 3)
-r2_val  <- round(r_val^2, 3)
-
-# --- Plot ---
-ggplot(df, aes(x = raster1, y = raster2)) +
-  geom_point(alpha = 0.3, size = 1.2, color = "#2E86AB") +
-  geom_smooth(method = "lm", color = "#E84855", linewidth = 1, se = TRUE) +
-  annotate(
-    "text", x = Inf, y = -Inf,
-    hjust = 1.1, vjust = -1,
-    label = paste0("r = ", r_val, "\nR² = ", r2_val),
-    size = 4.5, color = "grey20"
-  ) +
-  labs(
-    title    = "Comparison of mortality risk vs accesibility",
-    subtitle = "Each point represents one pixel",
-    x        = "Risk surface Values",
-    y        = "Accessibility Values"
-  ) +
-  theme_minimal(base_size = 13) +
-  theme(
-    plot.title    = element_text(face = "bold"),
-    plot.subtitle = element_text(color = "grey40")
-  )
-```
-
-```{r bivariate-local-morans, include=TRUE}
-
-
-# --- Load your rasters ---
-r1 <- rr_resampled
-r2 <- data_rast  # or use your rasterized points layer
-
-# --- Extract values and pixel coordinates ---
-df <- as.data.frame(r1, xy = TRUE, na.rm = TRUE)
-names(df)[3] <- "value1"
-
-df$value2 <- extract(r2, df[, c("x", "y")])[, 2]
-df <- na.omit(df)
-
-
-# --- Build spatial weights matrix (Queen contiguity on a grid) ---
-coords    <- as.matrix(df[, c("x", "y")])
-nb        <- dnearneigh(coords, d1 = 0, d2 = res(r1)[1] * 1.5)  # distance band = 1.5 pixels
-listw     <- nb2listw(nb, style = "W", zero.policy = TRUE)
-
-df$value2_z   <- scale(df$value2)[, 1]
-df$biv_lag    <- lag.listw(listw, df$value2_z, zero.policy = TRUE)
-
-# Bivariate Local Moran: correlation of x_i with spatial lag of y
-biv_lm        <- localmoran_bv(df$value1_z, df$value2_z, listw,
-                                nsim = 499, zero.policy = TRUE)
-
-df$biv_i      <- biv_lm[, 1]
-df$biv_p      <- attr(biv_lm, "pseudo-p")[, "Pr(folded) Sim"]
-df$biv_signif <- df$biv_p < 0.05
-
-df$biv_cluster <- "Not Significant"
-df$biv_cluster[df$biv_signif & df$value1_z > 0 & df$biv_lag > 0] <- "High-High"
-df$biv_cluster[df$biv_signif & df$value1_z < 0 & df$biv_lag < 0] <- "Low-Low"
-df$biv_cluster[df$biv_signif & df$value1_z > 0 & df$biv_lag < 0] <- "High-Low"
-df$biv_cluster[df$biv_signif & df$value1_z < 0 & df$biv_lag > 0] <- "Low-High"
-df$biv_cluster <- factor(df$biv_cluster,
-  levels = c("High-High", "Low-Low", "High-Low", "Low-High", "Not Significant"))
-
-p4 <- ggplot(df, aes(x = x, y = y, fill = biv_cluster)) +
-  geom_raster() +
-  scale_fill_manual(values = cluster_colors, name = "Bivariate\nLISA") +
-  coord_equal() +
-  labs(
-    title    = "Bivariate LISA — Local Moran's I",
-    subtitle = "Spatial correlation between Raster 1 and Raster 2 (p < 0.05)",
-    x = "Longitude", y = "Latitude"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(plot.title = element_text(face = "bold"))
-
-print(p4)
-
-
-```
-
-
-
-
-check the categories of high medium and low (thresholds)
-maybe also try general healthcare model
-
-Further analysis :
-1. Bi-variate cluster analysis 
-2. Test only with the built up area
-
-### calculate avg risk of high, medium and low
-### compare the number, regression
-### statistic analysis, max, min... volin plot
-### Bi-variate cluster analysis, check different between clusters
-### analysis build up area
 
 
 
