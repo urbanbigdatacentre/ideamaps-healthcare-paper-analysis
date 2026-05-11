@@ -349,6 +349,25 @@ p_risk <- ggplot() +
 print(p_risk)
 ```
 
+```{r}
+# Create contour lines at p = 0.05
+contours <- terra::as.contour(
+  rr_p,
+  levels = 0.05
+)
+
+# Convert to sf
+contours_sf <- sf::st_as_sf(contours)
+
+# Save as GeoJSON
+sf::st_write(
+  contours_sf,
+  "outputs/risk_significance_contour.geojson",
+  driver = "GeoJSON",
+  delete_dsn = TRUE
+)
+```
+
 ```{r plot-risk-surface-paper-style, fig.width=11, fig.height=8}
 rr_raster <- terra::rast(rr_adapt$rr)
 terra::crs(rr_raster) <- "ESRI:54009"
@@ -916,7 +935,7 @@ terra::writeRaster(rr_resampled, "outputs/risk-surface-kano.tif", overwrite = TR
 ```
 
 ```{r}
-terra::writeRaster(rr_resampled, "outputs/bivariate_lisa_map.tif", overwrite = TRUE)
+st_write(lisa_wgs84, dsn="outputs/lisa_clusters.gpkg", layer="clusters")
 ```
 
 
