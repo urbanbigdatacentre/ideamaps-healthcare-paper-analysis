@@ -879,6 +879,9 @@ ggsave(
   dpi = 600,
   bg = "white"
 )
+
+# GeoTIFF (WGS84, model grid resolution)
+terra::writeRaster(rr_resampled, "outputs/bivariate_lisa_map.tif", overwrite = TRUE)
 ```
 
 # Save Outputs
@@ -912,6 +915,9 @@ dev.off()
 terra::writeRaster(rr_resampled, "outputs/risk-surface-kano.tif", overwrite = TRUE)
 ```
 
+```{r}
+terra::writeRaster(rr_resampled, "outputs/bivariate_lisa_map.tif", overwrite = TRUE)
+```
 
 
 
