@@ -49,6 +49,8 @@ library(dunn.test)
 ```
 ---
 
+
+
 # Load Data
 
 ## Model outputs
@@ -60,7 +62,7 @@ head(data)
 
 ## Model outputs
 load geopackage
-```{r model-outputs, include=FALSE}
+```{r read-model-outputs-gpkg, include=FALSE}
 model_outputs <- sf::st_read("data/model-output-classification.gpkg", quiet = TRUE)
 head(model_outputs)
 ```
@@ -90,7 +92,9 @@ head(population)
 
 ## Step 1 — Reproject to Mollweide
 
-Equal-area projection required by `spatstat`; all layers must share the same CRS.
+Since all layers must use the same CRS, and the population data uses the Mollweide projection
+All layers are projected to that CRS.
+Note: Equal-area projection required by `spatstat`.
 
 ```{r reproject, include=FALSE}
 CRS_MOLLWEIDE <- "ESRI:54009"
@@ -103,8 +107,9 @@ model_proj           <- sf::st_transform(model_outputs,   crs = CRS_MOLLWEIDE)
 
 ## Step 2 — Clip deaths to 10 km study-area buffer
 
-Deaths outside the study boundary have no matching population controls
-and would inflate the risk surface.
+There can be some death cases outside the IDEAMAPS study area. To avoid strong boundary effect due to not matching population controls, 
+cases are included if they are within a define distance from the border (1km).
+This prevents the risk surface to be inflated
 
 ```{r clip-deaths}
 kano_buffer         <- sf::st_buffer(kano_proj, dist = 10000)
@@ -163,14 +168,9 @@ cat("Population points generated:", nrow(womenrepage), "\n")
 
 ## Step 4: Build spatial window from Kano polygon boundary
 
-Using the actual Kano boundary polygon (not a bounding box rectangle)
-ensures the risk surface matches the study area shape exactly.
-This requires projected coordinates - hence the UTM reprojection above.
+The spatial window uses the Kano boundary polygon (not a bounding box rectangle)
+to match its shape shape exactly.
 
-
-## Step 4 — Build observation window
-
-Uses the actual buffered boundary polygon (not a bounding box).
 
 ```{r build-window, include=FALSE}
 kano_window <- spatstat.geom::as.owin(sf::st_cast(kano_buffer, "POLYGON"))
