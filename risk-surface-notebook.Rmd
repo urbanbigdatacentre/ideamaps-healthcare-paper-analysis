@@ -19,6 +19,9 @@ Key optimisations applied:
 - Cases/Controls variable naming corrected
 - All data reprojected to Mollweide (ESRI:54009) for equal-area analysis
 
+
+
+
 ### Install required packages
 
 There is a selection of packages required for the risk surface analysys. Among them, geospatial data management packages and "sparr".
@@ -27,9 +30,11 @@ There is a selection of packages required for the risk surface analysys. Among t
 install.packages(c(
   "sparr", "terra", "sf", "spatstat", "dplyr", "ggplot2",
   "tidyterra", "ggspatial", "viridis", "cowplot", "rlang",
-  "spdep", "rgeoda", "dunn.test"
+  "spdep", "rgeoda", "dunn.test", "scico"
 ))
 ```
+
+
 
 ### Load required packages
 ```{r load-packages, include=FALSE}
@@ -46,10 +51,9 @@ library(viridis)
 library(spdep)     # Added to estimate local Moran's and bivariate local Moran's
 library(rgeoda)
 library(dunn.test)
+library(scico)
 ```
 ---
-
-
 
 # Load Data
 
@@ -62,7 +66,7 @@ head(data)
 
 ## Model outputs
 load geopackage
-```{r read-model-outputs-gpkg, include=FALSE}
+```{r model-outputs, include=FALSE}
 model_outputs <- sf::st_read("data/model-output-classification.gpkg", quiet = TRUE)
 head(model_outputs)
 ```
@@ -92,9 +96,7 @@ head(population)
 
 ## Step 1 — Reproject to Mollweide
 
-Since all layers must use the same CRS, and the population data uses the Mollweide projection
-All layers are projected to that CRS.
-Note: Equal-area projection required by `spatstat`.
+Equal-area projection required by `spatstat`; all layers must share the same CRS.
 
 ```{r reproject, include=FALSE}
 CRS_MOLLWEIDE <- "ESRI:54009"
@@ -107,9 +109,8 @@ model_proj           <- sf::st_transform(model_outputs,   crs = CRS_MOLLWEIDE)
 
 ## Step 2 — Clip deaths to 10 km study-area buffer
 
-There can be some death cases outside the IDEAMAPS study area. To avoid strong boundary effect due to not matching population controls, 
-cases are included if they are within a define distance from the border (1km).
-This prevents the risk surface to be inflated
+Deaths outside the study boundary have no matching population controls
+and would inflate the risk surface.
 
 ```{r clip-deaths}
 kano_buffer         <- sf::st_buffer(kano_proj, dist = 10000)
@@ -124,7 +125,65 @@ plot(sf::st_geometry(kano_buffer),
 plot(sf::st_geometry(kano_proj),        add = TRUE, border = "black")
 plot(sf::st_geometry(maternal_deaths_kano), add = TRUE, col = "red", pch = 16, cex = 0.8)
 ```
+# Layer 1 — Where do the deaths actually fall?
+```{r deaths-by-deprivation}
+# ---- Spatial join: each death point → its underlying model grid cell ----
+# st_join with st_intersects assigns each death the deprivation class
+# of the grid cell it falls in.
+deaths_with_class <- sf::st_join(
+  maternal_deaths_kano,
+  model_proj["result"],
+  join = sf::st_intersects
+)
 
+# Some deaths may fall in the 10 km buffer but outside the actual
+# model grid — drop them so we compare like with like.
+deaths_in_grid <- deaths_with_class |> dplyr::filter(!is.na(result))
+
+cat("Deaths inside model grid:", nrow(deaths_in_grid),
+    "of", nrow(maternal_deaths_kano), "\n\n")
+
+# ---- Observed distribution: where deaths actually fell ----
+obs <- table(factor(deaths_in_grid$result,
+                    levels = 0:2,
+                    labels = c("Low", "Medium", "High")))
+
+# ---- Expected distribution: where women of childbearing age live ----
+# This is the NULL hypothesis: deaths track population, not deprivation.
+# If the chi-squared test rejects this null, we have evidence that
+# deprivation matters beyond population density.
+pop_with_class <- sf::st_join(
+  womenrepage,
+  model_proj["result"],
+  join = sf::st_intersects
+) |> dplyr::filter(!is.na(result))
+
+exp_pct <- prop.table(table(factor(pop_with_class$result,
+                                    levels = 0:2,
+                                    labels = c("Low", "Medium", "High"))))
+exp <- as.numeric(exp_pct) * sum(obs)
+
+# ---- Chi-squared goodness-of-fit test ----
+# H0: deaths distributed proportionally to population
+# H1: deaths concentrated differently than population (i.e. deprivation
+#     adds explanatory power beyond population density)
+chi_test <- chisq.test(x = as.numeric(obs), p = as.numeric(exp_pct))
+
+# ---- Paper-ready output ----
+cat("Deprivation class | Observed deaths | Expected (pop-weighted)\n")
+cat("------------------+-----------------+------------------------\n")
+for (i in seq_along(obs)) {
+  cat(sprintf("%-17s | %15d | %22.1f\n",
+              names(obs)[i], obs[i], exp[i]))
+}
+cat(sprintf("\nχ² = %.2f, df = %d, p = %.3g\n",
+            chi_test$statistic, chi_test$parameter, chi_test$p.value))
+
+cat(sprintf("\n%.1f%% of deaths occurred in Medium or High deprivation areas\n",
+            100 * (obs["Medium"] + obs["High"]) / sum(obs)))
+cat(sprintf("(vs %.1f%% expected from population distribution alone)\n",
+            100 * (exp_pct["Medium"] + exp_pct["High"])))
+```
 
 ## Step 3: Generate population points from 100m grid polygons
 
@@ -168,9 +227,9 @@ cat("Population points generated:", nrow(womenrepage), "\n")
 
 ## Step 4: Build spatial window from Kano polygon boundary
 
-The spatial window uses the Kano boundary polygon (not a bounding box rectangle)
-to match its shape shape exactly.
-
+Using the actual Kano boundary polygon (not a bounding box rectangle)
+ensures the risk surface matches the study area shape exactly.
+This requires projected coordinates - hence the UTM re-projection above.
 
 ```{r build-window, include=FALSE}
 kano_window <- spatstat.geom::as.owin(sf::st_cast(kano_buffer, "POLYGON"))
@@ -289,6 +348,230 @@ p_risk <- ggplot() +
 
 print(p_risk)
 ```
+
+```{r}
+# Create contour lines at p = 0.05
+contours <- terra::as.contour(
+  rr_p,
+  levels = 0.05
+)
+
+# Convert to sf
+contours_sf <- sf::st_as_sf(contours)
+
+# Save as GeoJSON
+sf::st_write(
+  contours_sf,
+  "outputs/risk_significance_contour.geojson",
+  driver = "GeoJSON",
+  delete_dsn = TRUE
+)
+```
+
+```{r plot-risk-surface-paper-style, fig.width=11, fig.height=8}
+rr_raster <- terra::rast(rr_adapt$rr)
+terra::crs(rr_raster) <- "ESRI:54009"
+
+rr_p <- terra::rast(rr_adapt$P)
+terra::crs(rr_p) <- "ESRI:54009"
+
+rr_raster <- terra::mask(
+  terra::crop(rr_raster, terra::vect(kano_proj)),
+  terra::vect(kano_proj)
+)
+
+rr_p <- terra::mask(
+  terra::crop(rr_p, terra::vect(kano_proj)),
+  terra::vect(kano_proj)
+)
+rr_raster_smooth <- terra::disagg(rr_raster, fact = 6)
+rr_p_smooth      <- terra::disagg(rr_p, fact = 6)
+
+kano_sf <- sf::st_as_sf(kano_proj)
+
+p_risk <- ggplot() +
+
+  tidyterra::geom_spatraster(
+    data = rr_raster_smooth,
+    interpolate = TRUE,
+    alpha = 0.97
+  ) +
+
+  scale_fill_distiller(
+    palette   = "RdBu",
+    direction = -1,
+    limits    = c(-1.5, 1.5),
+    na.value  = "transparent",
+    name      = "Log Risk\nRatio",
+
+    guide = guide_colorbar(
+      order = 1,
+      barheight = unit(6, "cm"),
+      barwidth  = unit(0.7, "cm"),
+      title.position = "top",
+      title.hjust = 0.5
+    )
+  ) +
+
+  tidyterra::geom_spatraster_contour(
+    data = rr_p_smooth,
+    aes(linetype = "Statistically significant\n(p < 0.05)"),
+    breaks = 0.05,
+    color = "black",
+    linewidth = 0.35,
+    alpha = 0.85
+  ) +
+
+  geom_sf(
+    data = kano_sf,
+    aes(linetype = "Kano State boundary"),
+    fill = NA,
+    color = "black",
+    linewidth = 0.55
+  ) +
+
+  geom_sf(
+    data = maternal_deaths_kano,
+    aes(shape = "Maternal death case location"),
+    fill = "#F4E409",
+    color = "black",
+    size = 1.8,
+    stroke = 0.35,
+    alpha = 0.95
+  ) +
+
+  scale_shape_manual(
+    values = c(
+      "Maternal death case location" = 21
+    ),
+
+    name = NULL,
+
+    guide = guide_legend(
+      order = 2,
+      override.aes = list(size = 4)
+    )
+  ) +
+
+  scale_linetype_manual(
+    values = c(
+      "Statistically significant\n(p < 0.05)" = "solid",
+      "Kano State boundary" = "solid"
+    ),
+
+    breaks = c(
+      "Statistically significant\n(p < 0.05)",
+      "Kano State boundary"
+    ),
+
+    name = NULL,
+
+    guide = guide_legend(order = 3)
+  ) +
+
+  ggspatial::annotation_scale(
+    location = "bl",
+    width_hint = 0.22,
+    text_cex = 0.7,
+    line_width = 0.6
+  ) +
+
+  ggspatial::annotation_north_arrow(
+    location = "br",
+    which_north = "true",
+
+    pad_x = unit(0.18, "in"),
+    pad_y = unit(0.18, "in"),
+
+    style = north_arrow_fancy_orienteering(
+      text_size = 6
+    )
+  ) +
+
+  labs(
+    title = "Maternal Death Risk Surface — Kano State, Nigeria",
+
+    subtitle =
+      "Kernel density ratio (adaptive bandwidth) | Contours: p < 0.05"
+  ) +
+
+  coord_sf(expand = FALSE) +
+
+  theme_void(base_size = 12) +
+
+  theme(
+
+    plot.title = element_text(
+      family = "serif",
+      face = "bold",
+      size = 20,
+      hjust = 0.5,
+      margin = margin(b = 4)
+    ),
+
+    plot.subtitle = element_text(
+      family = "serif",
+      size = 13,
+      color = "grey30",
+      hjust = 0.5,
+      margin = margin(b = 8)
+    ),
+
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.box.just = "left",
+    legend.spacing.y = unit(0.45, "cm"),
+    legend.key.height = unit(0.9, "cm"),
+    legend.key.width = unit(1.3, "cm"),
+    legend.margin = margin(0, 8, 0, 8),
+
+    legend.title = element_text(
+      family = "serif",
+      face = "bold",
+      size = 10
+    ),
+
+    legend.text = element_text(
+      family = "serif",
+      size = 10
+    ),
+
+    panel.background = element_rect(
+      fill = "white",
+      color = NA
+    ),
+
+    plot.background = element_rect(
+      fill = "white",
+      color = NA
+    ),
+
+    plot.margin = margin(
+      t = 14,
+      r = 18,
+      b = 12,
+      l = 18
+    )
+  )
+
+print(p_risk)
+
+
+dir.create("outputs", showWarnings = FALSE)
+
+ggsave(
+  filename = "outputs/maternal_risk_surface_kano_publication.png",
+  plot = p_risk,
+  width = 11,
+  height = 7.5,
+  dpi = 600,
+  bg = "white"
+)
+```
+
+
+
+
 ## Step 8 — Normalize risk surface
 
 ```{r normalize, include=FALSE}
@@ -438,7 +721,118 @@ dunn.test(df_dep$risk, df_dep$deprivation, method = "bonferroni")
 ```
 
 ---
-# Spatial Autocorrelation
+# Spatial co-clustering
+
+## Prepare shared LISA data
+```{r prepare-lisa-data}
+# Convert risk raster pixels to polygons — these are the analysis units
+# for spatial autocorrelation. Resolution ~500m, matching the effective
+# resolution of the kernel density estimate.
+lisa_poly <- terra::as.polygons(rr_raster, dissolve = FALSE)
+names(lisa_poly)[1] <- "risk"
+
+# Aggregate the finer model grid's accessibility values onto each risk
+# pixel (mean of all model cells overlapping a pixel). This puts both
+# variables on the same spatial scale — essential, otherwise the LISA
+# would falsely inflate autocorrelation by inserting identical risk
+# values into many small grid cells.
+acc_rast <- terra::rasterize(
+  terra::vect(model_proj), rr_norm,
+  field = "Accessibility_Index_Standard"
+)
+lisa_poly$acc <- terra::extract(acc_rast, lisa_poly,
+                                fun = mean, na.rm = TRUE)[, 2]
+
+# Drop pixels with NA in either variable (typically edge pixels)
+lisa_sf <- sf::st_as_sf(lisa_poly) |> na.omit()
+
+# Invert accessibility: now HIGH value = HIGH deprivation, matching
+# the direction of "risk". Without this, the bivariate Moran's I would
+# come out NEGATIVE for what is intuitively a positive co-cluster.
+lisa_sf$acc_inv <- 1 - lisa_sf$acc
+
+cat("Pixels retained for spatial analysis:", nrow(lisa_sf), "\n")
+```
+
+## Global Moran's I — univariate and bivariate
+Three Moran's I statistics are reported:
+
+1. **Univariate Moran's I for risk** — is mortality risk itself
+   spatially clustered? (Expected: yes, risk is rarely random in space)
+2. **Univariate Moran's I for deprivation** — is the model output
+   spatially clustered? (Expected: yes, accessibility has obvious
+   spatial structure)
+3. **Bivariate Moran's I (risk × deprivation)** — do they cluster
+   *together*? This is the global counterpart of the LISA map and is
+   the headline number for the spatial validation.
+   
+```{r global-morans-i}
+# ---- Build neighbor list (queen contiguity) ----
+# Queen contiguity: two pixels are neighbors if they share an edge OR
+# a corner. Same definition used in the bivariate LISA below — they
+# must match for the two analyses to be comparable.
+nb <- spdep::poly2nb(lisa_sf, queen = TRUE)
+lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
+# style = "W" → row-standardized weights (each row sums to 1)
+# zero.policy = TRUE → tolerate isolated pixels (edge effects)
+
+cat("Average neighbours per pixel:",
+    round(mean(spdep::card(nb)), 2), "\n\n")
+
+# ---- (a) Univariate Moran's I for risk ----
+moran_risk <- spdep::moran.test(lisa_sf$risk, lw,
+                                 zero.policy = TRUE,
+                                 randomisation = TRUE)
+
+# ---- (b) Univariate Moran's I for deprivation (inverted accessibility) ----
+moran_acc <- spdep::moran.test(lisa_sf$acc_inv, lw,
+                                zero.policy = TRUE,
+                                randomisation = TRUE)
+
+# ---- (c) Bivariate Global Moran's I ----
+# Definition: I_xy = Σ(x_i * Σ(w_ij * y_j)) / Σ(x_i²)
+# i.e. correlation between standardized x and spatial-lag of standardized y.
+x  <- scale(lisa_sf$risk)[, 1]
+y  <- scale(lisa_sf$acc_inv)[, 1]
+Wy <- spdep::lag.listw(lw, y, zero.policy = TRUE)
+biv_I <- sum(x * Wy) / sum(x^2)
+
+# Monte Carlo permutation test:
+# Randomly shuffle y 999 times, recompute the statistic each time,
+# and see how often a shuffled value reaches the observed magnitude.
+# This is the standard inference approach for bivariate Moran's I
+# (closed-form distributions don't exist for the bivariate case).
+set.seed(42)
+n_perm <- 999
+biv_perm <- replicate(n_perm, {
+  y_shuf  <- sample(y)
+  Wy_shuf <- spdep::lag.listw(lw, y_shuf, zero.policy = TRUE)
+  sum(x * Wy_shuf) / sum(x^2)
+})
+biv_p <- (sum(abs(biv_perm) >= abs(biv_I)) + 1) / (n_perm + 1)
+
+# ---- Paper-ready output ----
+cat("=========================================================\n")
+cat("GLOBAL MORAN'S I RESULTS\n")
+cat("=========================================================\n\n")
+
+cat("Univariate Moran's I — Mortality risk\n")
+cat(sprintf("  I = %.4f   E[I] = %.4f   p = %.3g\n\n",
+            moran_risk$estimate["Moran I statistic"],
+            moran_risk$estimate["Expectation"],
+            moran_risk$p.value))
+
+cat("Univariate Moran's I — Deprivation (inverted accessibility)\n")
+cat(sprintf("  I = %.4f   E[I] = %.4f   p = %.3g\n\n",
+            moran_acc$estimate["Moran I statistic"],
+            moran_acc$estimate["Expectation"],
+            moran_acc$p.value))
+
+cat("Bivariate Moran's I — Risk × Deprivation\n")
+cat(sprintf("  I = %.4f   p = %.3g   (999 permutations)\n",
+            biv_I, biv_p))
+cat("=========================================================\n")
+```
 
 ## Bivariate Local Moran's I — Risk × Accessibility
 
@@ -448,30 +842,14 @@ spatial resolution of the kernel density estimate. Accessibility is aggregated
 variables share the same spatial scale, avoiding artificial autocorrelation
 from inserting identical risk values into many smaller grid cells.
 
-```{r bivariate-lisa}
-# Convert risk raster pixels to polygons
-lisa_poly <- terra::as.polygons(rr_raster, dissolve = FALSE)
-names(lisa_poly)[1] <- "risk"
-
-# Aggregate accessibility — single mean at extract step only
-acc_rast <- terra::rasterize(terra::vect(model_proj), rr_norm,
-                             field = "Accessibility_Index_Standard")
-lisa_poly$acc <- terra::extract(acc_rast, lisa_poly, fun = mean, na.rm = TRUE)[, 2]
-
-# Convert to sf, drop NA
-lisa_sf <- sf::st_as_sf(lisa_poly) |> na.omit()
-cat("Valid pixels for LISA:", nrow(lisa_sf), "\n")
-
-# Invert acc so high = high deprivation (aligns with risk direction)
-lisa_sf$acc_inv <- 1 - lisa_sf$acc
-
-# Queen contiguity weights
+```{r bivariate-lisa-map}
+# Queen contiguity weights for rgeoda (same definition as spdep above)
 queen_w <- rgeoda::queen_weights(lisa_sf)
 
 # Bivariate Local Moran's I: risk (x) vs inverted accessibility (y)
 biv_lisa <- rgeoda::local_bimoran(queen_w, lisa_sf[, c("risk", "acc_inv")])
 
-# Attach cluster labels
+# Attach cluster labels to the spatial object
 lisa_sf$cluster <- factor(
   rgeoda::lisa_clusters(biv_lisa, cutoff = 0.05),
   levels = c(1, 2, 3, 4, 0),
@@ -480,7 +858,7 @@ lisa_sf$cluster <- factor(
 
 cat("\nCluster counts:\n"); print(table(lisa_sf$cluster))
 
-# Reproject to WGS84 for plotting
+# Reproject to WGS84 for plotting (ggplot/sf works best in WGS84 for maps)
 lisa_wgs84 <- sf::st_transform(lisa_sf, crs = 4326)
 
 cluster_colors <- c(
@@ -512,6 +890,17 @@ ggplot() +
     plot.subtitle   = element_text(color = "grey40", size = 9),
     legend.key.size = unit(0.8, "cm")
   )
+
+ggsave(
+  filename = "outputs/bivariate_lisa_map.png",
+  width = 11,
+  height = 8,
+  dpi = 600,
+  bg = "white"
+)
+
+# GeoTIFF (WGS84, model grid resolution)
+terra::writeRaster(rr_resampled, "outputs/bivariate_lisa_map.tif", overwrite = TRUE)
 ```
 
 # Save Outputs
@@ -545,6 +934,9 @@ dev.off()
 terra::writeRaster(rr_resampled, "outputs/risk-surface-kano.tif", overwrite = TRUE)
 ```
 
+```{r}
+st_write(lisa_wgs84, dsn="outputs/lisa_clusters.gpkg", layer="clusters")
+```
 
 
 
