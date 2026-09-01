@@ -1,0 +1,480 @@
+---
+title: "Modified-Poisson-Regresion"
+author: "Diego Pajarito"
+date: "2026-08-27"
+output: html_document
+---
+
+
+
+
+---
+title: "Association Between Urban Informality and Maternal Mortality"
+author: "Diego Pajarito Grajales"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Introduction
+
+This analysis evaluates whether mortality rates differ across grid cells classified as having low, medium, or high urban informality. Population counts are used as an offset so that estimated effects represent differences in mortality rates rather than differences in population size.
+
+Models:
+
+a) Poisson
+b) Negative Binomial
+
+
+```{r setup, message=FALSE, warning=FALSE, echo=FALSE}
+library(sf)
+library(dplyr)
+library(jsonlite)
+library(MASS)
+library(broom)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(performance)
+library(DHARMa)
+library(tidyr)
+```
+
+# Data 
+
+##  Inputs:
+
+Data inputs are the model results from IDEAMAPS (deprivation), mortality cases from
+Kassep and population (WorlPOP women of childbearing age.
+
+```{r}
+mortality_json <- "./data/maternaldeaths.geojson"
+grid_gpkg <- "./data/model-output-classification.gpkg"
+grid_layer <- "deprivation-classification"
+pop_gpkg <- "./data/pop-grid-kano-centroids.gpkg"
+pop_layer <- "pop-grid-kano-centroids"
+```
+
+## Load Mortality Cases
+
+This is a JSON file recording maternal mortality cases from KASSEP
+
+```{r read-mortality-cases, echo=FALSE}
+
+mortality_sf <- st_read(mortality_json, quiet = TRUE)
+cat("Cases loaded. Rows:", nrow(mortality_sf), "\n")
+
+# head(mortality_sf)
+```
+
+## Load EmOC Deprivation Grid
+
+This is GeoPackage has the cells classified by EmOC access deprivation.
+There are two classifications applied to the EmOC access deprivation:
+
+One including the three categories and a second one where Medium and High 
+are conflated to reduce the classification to two categories.
+
+
+```{r read-emoc-deprivation, echo=FALSE}
+grid <- st_read(grid_gpkg, layer = grid_layer, quiet = TRUE)
+
+grid <- grid %>%
+  mutate(
+    informality_class = case_when(
+      result == 0 ~ "Low",
+      result == 1 ~ "Medium",
+      result == 2 ~ "High",
+      TRUE ~ NA_character_
+    ),
+    informality_class = factor(
+      informality_class,
+      levels = c("Low", "Medium", "High")
+    ),
+    informality_class_mh = case_when(
+      result == 0 ~ "Low",
+      result == 1 ~ "Medium-or-High",
+      result == 2 ~ "Medium-or-High",
+      TRUE ~ NA_character_
+    ),
+    informality_class_mh = factor(
+      informality_class_mh,
+      levels = c("Low", "Medium-or-High")
+    )
+  )
+
+cat("Deprivation loaded. Cells:", nrow(grid), "\n")
+
+```
+
+## Load women of childbearing age population to the Grid
+
+This Geopackage has cells with the estimate number of women of childbearing age.
+Such values are the population values used in the model. The values are transferred
+by applying and spatial join operation. Since the final values are the result of 
+estimates based on the presence of building footprints, the following columns are
+used:
+
+- pop: estimated number of women of childbearing age in the cell
+- pop_grid_pop: estimated population from the 1km x 1km grid cell (WorlPOP)
+- bcount: number of building footprints used to distribute population (1km -> 100m)
+
+```{r read-population-childbearingage, echo=FALSE}
+popgrid <- st_read(pop_gpkg, layer = pop_layer, quiet = TRUE)
+
+pop_centroids <- popgrid %>%
+  dplyr::select(pop, pop_grid_pop, bcount)
+
+grid <- grid %>%
+  st_join(
+    pop_centroids,
+    join = st_contains
+  )
+
+cat("Population loaded. Cells:", nrow(popgrid), "\n")
+#summary(popgrid)
+```
+
+
+
+# Data Preparation
+
+Preparation tasks include operations such as
+ - Project Layers to Common CRS
+
+```{r project-df-crs, echo=FALSE}
+mortality_sf <- st_transform(mortality_sf, st_crs(grid))
+popgrid <- st_transform(popgrid, st_crs(grid))
+```
+
+ - Assign and count Mortality Cases to Grid Cells
+
+```{r count-mortality-cases, echo=FALSE}
+case_grid <- st_join(
+  mortality_sf,
+  grid,
+  join = st_within,
+  left = FALSE
+)
+
+case_counts <- case_grid %>%
+  st_drop_geometry() %>%
+  count(grid_id, name = "deaths")
+```
+
+## Analysis data set
+
+To prepare the analysis data set, it was required to consider that the overall aim 
+is to compare how mortality rates (mortality cases within the population) change, 
+or not change, accross the different EmOC acces deprivation categories.
+
+For this, the dataset should i) exclude gridcells where there's no population of
+women of child bearing age and ii) consider areas with and withouth recorded
+cases of maternal mortality
+
+
+```{r create-analysis-dataset}
+analysis_df <- grid %>%
+  dplyr::filter(pop>0) %>% 
+  left_join(case_counts, by = "grid_id") %>% 
+  mutate(
+    deaths = ifelse(is.na(deaths), 0, deaths)
+  ) %>%
+  st_drop_geometry() %>%
+  dplyr::select(Accessibility_Index_Standard, informality_class, informality_class_mh, pop, deaths)
+
+summary(analysis_df)
+```
+
+
+### Subset B: grid cells only with recorded mortality cases
+
+This is a secondary dataset used for deeper analysis
+
+```{r subA-create-dataset, echo=FALSE}
+analysis_df_b <- grid %>%
+  left_join(case_counts, by = "grid_id") %>% 
+  mutate(
+    deaths = ifelse(is.na(deaths), 0, deaths)
+  ) %>%
+  st_drop_geometry() %>%
+  dplyr::filter(deaths>0) %>% 
+  dplyr::select(Accessibility_Index_Standard, informality_class, informality_class_mh, pop, deaths)
+
+summary(analysis_df_b)
+```
+
+
+# Model fitting
+
+## Step 1: Poisson Model without adjusting by population
+
+### Model fit for the three deprivation categories
+
+This model serves as an initial exploration of the possible relationship between
+EmOC access deprivation and the count of mortality cases. However, the results 
+are not optimal due to the lack of adjustment by population.
+
+One of the drawbacks of not accounting for population size is that larger cells 
+may naturally have more deaths simply because more people live there.
+
+This model assumes H0: Beta = 0, Or equivalent to IRR = 0
+A key to interpret the model is the IRR (effect size) and the confidence interval.
+
+Below an example of how this could be interpreted: 
+
+IRR = 1.5 for Medium → medium informality cells have 50% more deaths than low informality cells.
+IRR = 2.0 for High → high informality cells have twice as many deaths as low informality cells.
+
+
+```{r model-subA-unadjusted}
+
+poisson_unadjusted <- glm(
+  deaths ~ informality_class,
+  family = poisson(link = "log"),
+  data = analysis_df
+)
+#summary(poisson_unadjusted)
+
+# Extract coefficients
+results <- tidy(
+ poisson_unadjusted,
+ exponentiate = TRUE,
+ conf.int = TRUE,
+)
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+
+```
+### Model fit for deprivation categories conlfated to two
+
+
+```{r model-subA-unadjusted-conflated}
+
+poisson_unadjusted_conflated <- glm(
+  deaths ~ informality_class_mh,
+  family = poisson(link = "log"),
+  data = analysis_df_b
+)
+#summary(poisson_unadjusted_conflated)
+
+# Extract coefficients
+results <- tidy(
+ poisson_unadjusted_conflated,
+ exponentiate = TRUE,
+ conf.int = TRUE,
+)
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class_mh", "", term)
+)
+
+results
+
+```
+
+
+
+
+
+## Step 2: Negative Binomial Model
+
+
+The negative binomial model includes control by the population, in this case, 
+of women of childbearing age. This compares the mortality rates between grid cells
+in the different categories of EmOC access deprivation. This model allows to 
+describe how much higher (or lower) is mortality in other categories compared with
+low-deprivation cells.
+
+The model considers facts related to maternal health such as death cases being
+rare events, unevenly distributed and often clustered spatially that leave many
+grid cells with ceros.
+
+This model assumes H0: Beta = 0, Or equivalent to IRR = 0
+A key to interpret the model is the IRR (effect size) and the 95% confidence interval.
+
+### Model fit for the three deprivation categories
+
+
+```{r model-negativebinomial}
+
+nb_model <- glm.nb(
+ deaths ~ informality_class + offset(log(pop)),
+ data = analysis_df
+)
+
+summary(nb_model)
+
+# Extract coefficients
+results <- tidy(
+ nb_model,
+ conf.int = TRUE,
+ exponentiate = TRUE
+)
+
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+```
+
+
+### Model fit for the deprivation categories conflated to two 
+
+```{r model-negativebinomial_conflated}
+
+nb_model_mh <- glm.nb(
+ deaths ~ informality_class_mh + offset(log(pop)),
+ data = analysis_df
+)
+
+summary(nb_model_mh)
+
+# Extract coefficients
+results <- tidy(
+ nb_model_mh,
+ conf.int = TRUE,
+ exponentiate = TRUE
+)
+
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class_mh", "", term)
+)
+
+results
+```
+
+### Model fit for only grid cells with maternal death cases
+
+
+```{r model-negativebinomial_onlycasecells}
+
+nb_model_case <- glm.nb(
+ deaths ~ informality_class + offset(log(pop)),
+ data = analysis_df_b
+)
+summary(nb_model_case)
+
+# Extract coefficients
+results <- tidy(
+ nb_model_mh,
+ conf.int = TRUE,
+ exponentiate = TRUE
+)
+
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+```
+
+
+
+## Step 3: Comparing Binomial GLM vs Poisson GLM 
+
+There are some factors that serve to decide which models are more adequate for the
+analysis. The comparison uses overdispertion, AIC and
+
+
+### Estimating a Poisson GLM model controlled by population
+
+```{r model-poison-coeficients}
+pois_model <- glm(
+  deaths ~ informality_class +
+  offset(log(pop)),
+  family = poisson(),
+  data = analysis_df
+)
+
+# Extract coefficients
+results <- tidy(
+ pois_model,
+ exponentiate = TRUE,
+ conf.int = TRUE,
+)
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class_mh", "", term)
+)
+
+results
+```
+
+
+### Over dispersion
+
+Estimating 
+
+deviance(poisson_model) / df.residual(poisson_model)
+
+sum(residuals(poisson_model, type="pearson")^2) /
+  df.residual(poisson_model)
+
+
+Ratio Value     Interpretation
+ - aprox 1      Poisson assumption reasonable
+ - 1.5 - 2      Mild overdispersion
+ -    > 2       Substantial overdispersion
+ -    > 4       Strong overdispersion
+ 
+ for mortality data in grids, values above 2 are very common
+
+
+```{r model-comparison-overdispersion}
+
+
+rat_disp_v1 <- deviance(pois_model) / df.residual(pois_model)
+
+rat_disp_v2 <- sum(residuals(pois_model, type="pearson")^2) /
+  df.residual(pois_model)
+
+data.frame(c("Deviance/Residual ", "sum(res--pearson)^2/residual "), c(rat_disp_v1, rat_disp_v2))
+
+
+```
+
+### AIC Values comparison 
+
+For this comparison, the two models will provide AIC values with the lower AIC values
+indicates the preferred model. The following are indications to support the 
+decision 
+
+  ΔAIC          Interpretation
+ -   < 2        Models essentially equivalent
+ - 2 - 4        Weak support for lower AIC model
+ - 4 - 10       Moderate support
+ -   > 10       Strong support
+
+
+
+```{r model-comparison-AIC}
+
+
+
+AIC(pois_model, nb_model)
+
+```
+
