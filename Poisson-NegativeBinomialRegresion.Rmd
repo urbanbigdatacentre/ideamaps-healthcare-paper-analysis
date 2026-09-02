@@ -40,6 +40,7 @@ library(kableExtra)
 library(performance)
 library(DHARMa)
 library(tidyr)
+library(leaflet)
 ```
 
 # Data 
@@ -314,6 +315,10 @@ nb_model <- glm.nb(
 )
 
 summary(nb_model)
+exp(cbind(
+  IRR = coef(nb_model),
+  confint(nb_model)
+))
 
 # Extract coefficients
 results <- tidy(
@@ -343,6 +348,10 @@ nb_model_mh <- glm.nb(
 )
 
 summary(nb_model_mh)
+exp(cbind(
+  IRR = coef(nb_model_mh),
+  confint(nb_model_mh)
+))
 
 # Extract coefficients
 results <- tidy(
@@ -371,6 +380,10 @@ nb_model_case <- glm.nb(
  data = analysis_df_b
 )
 summary(nb_model_case)
+exp(cbind(
+  IRR = coef(nb_model_case),
+  confint(nb_model_case)
+))
 
 # Extract coefficients
 results <- tidy(
@@ -477,4 +490,214 @@ decision
 AIC(pois_model, nb_model)
 
 ```
+
+
+
+
+## Step 3: Aggregating grid cells into 1km grid size
+
+
+Having 100m grid cells makes the case of having thousands of cero values for 
+mortality. Looking for an option to reduce this proportion, we tried to aggregate 
+the cells. Since the model uses the 1km grid from WorldPOP 
+
+The process group the cells based on the unique value for the estimated population
+"pop_grid_pop", dissolves the geometries and estimate new values for the
+accessibility index (avg), building count, and deprivation category (mode)
+
+
+```{r aggregating-grid-1k}
+
+get_mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+grid1k <- grid %>%
+  group_by(pop_grid_pop) %>%
+  summarise(
+    bcount = sum(bcount, na.rm = TRUE),
+    grid_count = n(),
+    Accessibility_Index_avg = mean(
+      Accessibility_Index_Standard,
+      na.rm = TRUE
+    ),
+    informality_mode = get_mode(result),
+    .groups = "drop"
+  ) %>%
+  rename(pop = pop_grid_pop)
+
+grid1k <- tibble::rowid_to_column(grid1k, "id")
+
+```
+
+### Estimating the new accessibility index
+
+The index is estimated in two ways, one is the use of established thresholds
+to the newly averaged index and the second comes form the mode value.
+
+# Classify the accessibility into three categories based on the standardized Accessibility Index: 0 for High accessibility, 1 for Medium accessibility, and 2 for Low accessibility. The thresholds for classification are set at 0.005 and 0.02, which can be adjusted based on the distribution of the Accessibility Index in the dataset.
+
+The thresholds used for the 100m grid cell are applied to the aggregated cells as:
+High: Value 2. Accessibility index (0.02 - 1)
+Medium: Value 1. Accessibility index (0.005 - 0.02)
+Low: Value 0. Accessibility index (0 - 0.005)
+
+
+```{r classifying-deprivation-1k, echo=FALSE}
+
+grid1k <- grid1k %>%
+  mutate(
+    informality_class_mode = case_when(
+      informality_mode == 0 ~ "Low",
+      informality_mode == 1 ~ "Medium",
+      informality_mode == 2 ~ "High",
+      TRUE ~ NA_character_
+    ),
+    informality_class_mode = factor(
+      informality_class_mode,
+      levels = c("Low", "Medium", "High")
+    ),
+    informality_class = case_when(
+      Accessibility_Index_avg >= 0 & Accessibility_Index_avg <= 0.005  ~ "High",
+      Accessibility_Index_avg > 0.005 & Accessibility_Index_avg <= 0.02 ~ "Medium",
+      Accessibility_Index_avg > 0.02 & Accessibility_Index_avg <= 1 ~ "Low",
+      TRUE ~ NA_character_
+    ),
+    informality_class = factor(
+      informality_class,
+      levels = c("Low", "Medium", "High")
+    )
+  )
+
+cat("Deprivation processed Cells:", nrow(grid1k), "\n")
+
+```
+
+### Counting mortality cases
+
+
+```{r count-mortality-cases-1k, echo=FALSE}
+case_grid_1k <- st_join(
+  mortality_sf,
+  grid1k,
+  join = st_within,
+  left = FALSE
+)
+
+case_counts_1k <- case_grid_1k %>%
+  st_drop_geometry() %>%
+  count(id, name = "deaths")
+```
+
+
+
+
+### Analysis data set that includes maternal death cases count
+
+
+```{r create-analysis-dataset-1k}
+analysis_1k <- grid1k %>%
+  left_join(case_counts_1k, by = "id") %>% 
+  mutate(
+    deaths = ifelse(is.na(deaths), 0, deaths)
+  ) %>%
+  st_drop_geometry() %>%
+  dplyr::select(Accessibility_Index_avg, informality_class, informality_mode, pop, deaths)
+
+summary(analysis_1k)
+```
+
+
+### Negative Binomial Model using the 1k grid
+
+
+The negative binomial model includes control by the population, in this case, 
+of women of childbearing age. This compares the mortality rates between grid cells
+in the different categories of EmOC access deprivation. This model allows to 
+describe how much higher (or lower) is mortality in other categories compared with
+low-deprivation cells.
+
+The model considers facts related to maternal health such as death cases being
+rare events, unevenly distributed and often clustered spatially that leave many
+grid cells with ceros.
+
+This model assumes H0: Beta = 0, Or equivalent to IRR = 0
+A key to interpret the model is the IRR (effect size) and the 95% confidence interval.
+
+### Model fit for the three deprivation categories
+
+
+```{r model-negativebinomial-1k}
+
+nb_model_1k <- glm.nb(
+ deaths ~ informality_class + offset(log(pop)),
+ data = analysis_1k
+)
+
+#summary(nb_model)
+exp(cbind(
+  IRR = coef(nb_model_1k),
+  confint(nb_model_1k)
+))
+
+# Extract coefficients
+results <- tidy(
+ nb_model_1k,
+ conf.int = TRUE,
+ exponentiate = TRUE
+)
+
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+```
+
+
+
+```{r aggregated-grid-plot}
+
+pal <- colorFactor(
+  palette = c("blue", "orange", "red"),
+  domain = grid1k$informality_class
+)
+
+leaflet(grid1k) %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addPolygons(
+    fillColor = ~pal(informality_class),
+    fillOpacity = 0.7,
+    color = "black",
+    weight = 0.5,
+    popup = ~paste(
+      "<b>Category:</b>", informality_class, "<br>",
+      "<b>Category Mode:</b>", informality_mode, "<br>",
+      "<b>Population:</b>", pop, "<br>",
+      "<b>Bcount:</b>", bcount, "<br>",
+      "<b>Accessibility Index:</b>",
+      round(Accessibility_Index_avg, 4)
+    )
+  ) %>%
+  addCircleMarkers(
+    data = mortality_sf,
+    radius = 5,
+    color = "black",fillColor = "white",
+    fillOpacity = 0.9,
+    stroke = TRUE,
+    weight = 1
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~informality_class,
+    title = "EmOC Accessibility"
+  )
+
+```
+
 
