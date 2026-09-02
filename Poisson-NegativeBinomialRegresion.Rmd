@@ -635,7 +635,7 @@ nb_model_1k <- glm.nb(
  data = analysis_1k
 )
 
-#summary(nb_model)
+#summary()
 exp(cbind(
   IRR = coef(nb_model_1k),
   confint(nb_model_1k)
@@ -672,8 +672,7 @@ leaflet(grid1k) %>%
   addPolygons(
     fillColor = ~pal(informality_class),
     fillOpacity = 0.7,
-    color = "black",
-    weight = 0.5,
+    stroke = FALSE,
     popup = ~paste(
       "<b>Category:</b>", informality_class, "<br>",
       "<b>Category Mode:</b>", informality_mode, "<br>",
@@ -699,5 +698,333 @@ leaflet(grid1k) %>%
   )
 
 ```
+
+
+
+## Step 4: Reducing potential noise - Built up areas 
+
+Due to the nature of the accessibility model and the IDEAMAPS Data ecosystem
+user interface, large rural areas with no buildings were considered in the model 
+outputs.
+When compared to maternal mortality cases, those areas are not relevant. Chances
+of recording maternal mortality cases in non built up areas are extremely low. 
+Therefore, removing them from the analysis is consistent and allows for an analysis
+that is more consistent with the domain and real conditions. 
+
+
+### Understanding access deprivation and built up areas
+
+
+
+```{r plot-building-count-grid}
+ggplot(
+  grid,
+  aes(x = bcount)
+) +
+  geom_histogram(
+    bins = 30,
+    fill = "steelblue",
+    colour = "white"
+  ) +
+  facet_wrap(~ informality_class) +
+  labs(
+    x = "Building Count",
+    y = "Grid cells",
+    title = "Building Count Histograms by Access deprivation categories"
+  ) +
+  theme_minimal()
+```
+```{r table-building-count-grid}
+
+bcount_by_informality <- grid %>%
+  st_drop_geometry() %>%
+  mutate(
+    bcount_group = case_when(
+      bcount == 0 ~ "0",
+      bcount < 5 ~ "1-4",
+      bcount >= 5 ~ "5+"
+    )
+  ) %>%
+  count(informality_class, bcount_group) %>%
+  tidyr::pivot_wider(
+    names_from = bcount_group,
+    values_from = n,
+    values_fill = 0
+  )
+
+bcount_by_informality
+
+```
+
+The data shows the large disproportion of grid cells with no built up area. 
+
+
+### Understanding access deprivation and population
+
+Population values are distributed according to the building count, so the behaviour 
+is similar to the building count. However, there are nuances to consider in the data. 
+The distribution leave values with decimals and in cases smaller than 1 person.
+When contrasting the population density of Nigeria (250 ppl/sqr km or 25 ppl / ha), 
+it is inconsistent to keep grid cells with very low values of population.
+
+With more than 120 grid cells having 5 or less people per ha, the data set includes
+way too much areas in which chances of having maternal mortality cases are extremely
+low by definition.
+
+
+```{r plot-population-count-grid}
+
+ggplot(
+  grid %>% st_drop_geometry(),
+  aes(x = pop)
+) +
+  geom_histogram(
+    binwidth = 1,
+    fill = "steelblue",
+    color = "white"
+  ) +
+  coord_cartesian(xlim = c(0, 20)) +
+  labs(
+    x = "Population",
+    y = "Number of Cells",
+    title = "Distribution of Population Values per grid or per Ha (0 to 20)"
+  ) +
+  theme_minimal()
+```
+
+
+
+
+
+### Estimating Poisson GLM model for built up areas and consistent population 
+
+
+A new model is fitted to remove the areas with no built up area and those in
+which population density is too low (less than 1 ppl / ha)
+
+
+```{r create-analysis-dataset-1ppha}
+analysis_built <- grid %>%
+  dplyr::filter(pop>1) %>% 
+  left_join(case_counts, by = "grid_id") %>% 
+  mutate(
+    deaths = ifelse(is.na(deaths), 0, deaths)
+  ) %>%
+  st_drop_geometry() %>%
+  dplyr::select(Accessibility_Index_Standard, informality_class, informality_class_mh, pop, deaths)
+
+summary(analysis_df)
+```
+
+
+```{r model-poison-pop-1ppha}
+pois_model <- glm(
+  deaths ~ informality_class +
+  offset(log(pop)),
+  family = poisson(),
+  data = analysis_built
+)
+
+#summary(pois_model)
+exp(cbind(
+  IRR = coef(pois_model),
+  confint(pois_model)
+))
+
+# Extract coefficients
+results <- tidy(
+ pois_model,
+ exponentiate = TRUE,
+ conf.int = TRUE,
+)
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+```
+
+
+
+
+### Estimating Negative Binomial model for built up areas and consistent population 
+
+
+An additional model is fitted for comparison on their performance
+
+
+```{r model-nb-pop-built}
+
+
+nb_model <- glm.nb(
+ deaths ~ informality_class + offset(log(pop)),
+ data = analysis_built
+)
+
+#summary()
+exp(cbind(
+  IRR = coef(nb_model),
+  confint(nb_model)
+))
+
+# Extract coefficients
+results <- tidy(
+ nb_model_1k,
+ conf.int = TRUE,
+ exponentiate = TRUE
+)
+
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+
+```
+
+
+### Over dispersion
+
+Estimating 
+
+deviance(poisson_model) / df.residual(poisson_model)
+
+sum(residuals(poisson_model, type="pearson")^2) /
+  df.residual(poisson_model)
+
+
+Ratio Value     Interpretation
+ - aprox 1      Poisson assumption reasonable
+ - 1.5 - 2      Mild overdispersion
+ -    > 2       Substantial overdispersion
+ -    > 4       Strong overdispersion
+ 
+ for mortality data in grids, values above 2 are very common
+
+
+```{r model-built-comparison-overdispersion}
+
+
+rat_disp_v1 <- deviance(pois_model) / df.residual(pois_model)
+
+rat_disp_v2 <- sum(residuals(pois_model, type="pearson")^2) /
+  df.residual(pois_model)
+
+data.frame(c("Deviance/Residual ", "sum(res--pearson)^2/residual "), c(rat_disp_v1, rat_disp_v2))
+
+
+```
+
+### AIC Values comparison 
+
+For this comparison, the two models will provide AIC values with the lower AIC values
+indicates the preferred model. The following are indications to support the 
+decision 
+
+  ΔAIC          Interpretation
+ -   < 2        Models essentially equivalent
+ - 2 - 4        Weak support for lower AIC model
+ - 4 - 10       Moderate support
+ -   > 10       Strong support
+
+
+
+```{r model-built-comparison-AIC}
+
+
+
+AIC(pois_model, nb_model)
+
+```
+
+
+
+
+
+
+```{r plot-built}
+
+pal <- colorFactor(
+  palette = c("blue", "orange", "red"),
+  domain = grid1k$informality_class
+)
+
+leaflet(grid[grid$pop>1,]) %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addPolygons(
+    fillColor = ~pal(informality_class),
+    fillOpacity = 0.7,
+    stroke = FALSE,
+    popup = ~paste(
+      "<b>Category:</b>", informality_class, "<br>",
+      "<b>Population:</b>", pop, "<br>",
+      "<b>Bcount:</b>", bcount, "<br>",
+      "<b>Accessibility Index:</b>",
+      round(Accessibility_Index_Standard, 4)
+    )
+  ) %>%
+  addCircleMarkers(
+    data = mortality_sf,
+    radius = 5,
+    color = "black",fillColor = "purple",
+    fillOpacity = 0.9,
+    stroke = TRUE,
+    weight = 1
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~informality_class,
+    title = "EmOC Accessibility"
+  )
+
+```
+
+
+## Step 5: testing deaths as binary variable
+
+
+```{r model-poison-deaths-bin}
+
+analysis_built_bin <- analysis_built %>%
+  mutate(
+    deaths_bin = ifelse(deaths > 0, 1, 0)
+  )
+
+pois_model <- glm(
+  deaths_bin ~ informality_class +
+  offset(log(pop)),
+  family = poisson(),
+  data = analysis_built_bin
+)
+
+#summary(pois_model)
+exp(cbind(
+  IRR = coef(pois_model),
+  confint(pois_model)
+))
+
+# Extract coefficients
+results <- tidy(
+ pois_model,
+ exponentiate = TRUE,
+ conf.int = TRUE,
+)
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+```
+
 
 
