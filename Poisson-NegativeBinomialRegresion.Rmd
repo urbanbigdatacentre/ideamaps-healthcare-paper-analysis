@@ -658,6 +658,39 @@ results <- results %>%
 results
 ```
 
+### Model fit for continuous accessibility index Poison
+
+
+```{r model-poison-1k}
+
+poison_model_1k <- glm(
+ deaths ~ Accessibility_Index_avg + offset(log(pop)),
+ family = poisson(),
+ data = analysis_1k
+)
+
+summary(poison_model_1k)
+exp(cbind(
+  IRR = coef(poison_model_1k),
+  confint(poison_model_1k)
+))
+
+# Extract coefficients
+results <- tidy(
+ poison_model_1k,
+ conf.int = TRUE,
+ exponentiate = TRUE
+)
+
+# Keep only deprivation effects
+results <- results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+  term = gsub("informality_class", "", term)
+)
+
+results
+```
 
 
 ```{r aggregated-grid-plot}
@@ -847,8 +880,20 @@ results <- results %>%
 results
 ```
 
+```{r tbl-summary-deaths-built}
 
+table(analysis_built$deaths)
 
+table(analysis_built$informality_class)
+
+analysis_built %>%
+  group_by(informality_class) %>%
+  summarise(
+    cells = n(),
+    deaths = sum(deaths)
+  )
+
+```
 
 ### Estimating Negative Binomial model for built up areas and consistent population 
 
@@ -987,22 +1032,28 @@ leaflet(grid[grid$pop>1,]) %>%
 ```
 
 
-## Step 5: testing deaths as binary variable
+## Step 5: testing deaths as binary/continuous variable and 1km grid cell
 
 
-```{r model-poison-deaths-bin}
+```{r model-bin-cont-1km}
 
-analysis_built_bin <- analysis_built %>%
+analysis_1k_bin <- analysis_1k %>%
   mutate(
     deaths_bin = ifelse(deaths > 0, 1, 0)
   )
 
 pois_model <- glm(
-  deaths_bin ~ informality_class +
+  deaths ~ Accessibility_Index_avg +
   offset(log(pop)),
-  family = poisson(),
-  data = analysis_built_bin
+  data = analysis_1k_bin
 )
+
+#pois_model <- glm(
+#  deaths ~ Accessibility_Index_avg +
+#  offset(log(pop)),
+#  family = poisson(),
+#  data = analysis_1k_bin
+#)
 
 #summary(pois_model)
 exp(cbind(
